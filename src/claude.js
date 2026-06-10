@@ -433,7 +433,7 @@ export async function chat(userId, message, onStatus) {
 
       const response = await client.messages.create({
         model: config.anthropic.model,
-        max_tokens: 4096,
+        max_tokens: 8192,
         system: SYSTEM_PROMPT,
         tools: allTools,
         messages: history,
@@ -477,6 +477,14 @@ export async function chat(userId, message, onStatus) {
         const textParts = textBlocks.map((b) => b.text).join('\n');
         const cleaned = textParts.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
         console.log(`[Chat] 返回文本: ${cleaned.substring(0, 80)}...`);
+        // 检测输出截断
+        if (response.stop_reason === 'max_tokens') {
+          if (cleaned.length > 0) {
+            return cleaned + '\n\n⚠️ 回复因输出长度限制被截断，如需完整内容请分批请求。';
+          } else {
+            return '⚠️ 任务因输出 Token 限制被截断，未生成回复。请简化任务或分步执行。';
+          }
+        }
         return cleaned || '(无回复)';
       }
 

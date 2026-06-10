@@ -121,6 +121,7 @@ export class ClaudeCodeAgent extends BaseAgent {
 
       let finalText = '';
       const bashCommands = [];
+      let isTruncated = false;
 
       this.process.stdout.on('data', (data) => {
         const lines = data.toString().split('\n').filter(l => l.trim());
@@ -144,6 +145,17 @@ export class ClaudeCodeAgent extends BaseAgent {
 
             if (msg.type === 'result' && msg.result) {
               finalText = msg.result;
+              // 检测是否因为 token 限制被截断
+              if (msg.stop_reason === 'max_tokens') {
+                isTruncated = true;
+              }
+            }
+
+            // 检测 assistant 消息中的 stop_reason
+            if (msg.type === 'assistant' && msg.message?.stop_reason) {
+              if (msg.message.stop_reason === 'max_tokens') {
+                isTruncated = true;
+              }
             }
           } catch {
             // 非 JSON 行忽略
@@ -171,7 +183,12 @@ export class ClaudeCodeAgent extends BaseAgent {
           return;
         }
 
-        this.emit('complete', { result: finalText });
+        // 检测是否因为 token 限制被截断
+        if (isTruncated) {
+          finalText += '\n\n⚠️ 任务因输出 Token 限制被截断，可能未完成。如需完整执行，请简化任务或分步执行。';
+        }
+
+        this.emit('complete', { result: finalText, truncated: isTruncated });
         resolve(finalText);
       });
 

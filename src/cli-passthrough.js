@@ -56,6 +56,8 @@ export function executeCliCommand(command, onStatus, timeoutMs = 300000) {
     let lastProgressTime = startTime;
     const bashCommands = [];
     let finalText = '';
+    let stopReason = null;
+    let isTruncated = false;
 
     proc.stdout.on('data', (data) => {
       buffer += data.toString();
@@ -108,6 +110,19 @@ export function executeCliCommand(command, onStatus, timeoutMs = 300000) {
           // 最终结果
           if (msg.type === 'result' && msg.result) {
             finalText = msg.result;
+            // 检测是否因为 token 限制被截断
+            if (msg.stop_reason === 'max_tokens') {
+              isTruncated = true;
+              stopReason = 'max_tokens';
+            }
+          }
+
+          // 检测 assistant 消息中的 stop_reason
+          if (msg.type === 'assistant' && msg.message?.stop_reason) {
+            if (msg.message.stop_reason === 'max_tokens') {
+              isTruncated = true;
+              stopReason = 'max_tokens';
+            }
           }
         } catch {
           // 非 JSON 行忽略
@@ -154,7 +169,12 @@ export function executeCliCommand(command, onStatus, timeoutMs = 300000) {
       }
       result += finalText.trim() || '(无输出)';
 
-      resolve({ output: result, duration });
+      // 检测是否因为 token 限制被截断
+      if (isTruncated) {
+        result += '\n\n⚠️ 任务因输出 Token 限制被截断，可能未完成。如需完整执行，请简化任务或分步执行。';
+      }
+
+      resolve({ output: result, duration, truncated: isTruncated, stopReason });
     });
 
     proc.on('error', (err) => {
@@ -175,8 +195,10 @@ export async function handleCliPassthrough(message, onStatus) {
 
   try {
     if (onStatus) onStatus(`🖥️ 执行 CLI: ${parsed.command.substring(0, 50)}...`);
-    const { output, duration } = await executeCliCommand(parsed.command, onStatus);
-    return `🖥️ CLI 执行完成 (${duration}s)\n\n${output}`;
+    const { output, duration, truncated } = await executeCliCommand(parsed.command, onStatus);
+    const statusIcon = truncated ? '⚠️' : '🖥️';
+    const statusText = truncated ? 'CLI 执行被截断' : 'CLI 执行完成';
+    return `${statusIcon} ${statusText} (${duration}s)\n\n${output}`;
   } catch (err) {
     return `❌ ${err.message}`;
   }
