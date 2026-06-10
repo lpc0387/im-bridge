@@ -1,15 +1,40 @@
 {
   "name": "im-bridge",
-  "version": "2.0.0",
-  "description": "IM Bridge - 通过企业微信在手机上与 Claude 对话",
+  "version": "3.0.0",
+  "description": "IM Bridge - 通过企业微信/飞书/钉钉/Telegram 在手机上与 Claude 对话",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "express": "^4.21.0",
-    "dotenv": "^16.4.7"
-  }
+    "dotenv": "^16.4.7",
+    "ws": "^8.16.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/express": "^4.17.21",
+    "@types/ws": "^8.5.10",
+    "@types/node-cron": "^3.0.11"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "claude",
+    "im",
+    "bridge",
+    "wechat",
+    "feishu",
+    "dingtalk",
+    "telegram",
+    "ai",
+    "agent"
+  ],
+  "author": "",
+  "license": "MIT"
 }

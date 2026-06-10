@@ -373,7 +373,7 @@ export async function chat(userId, message, onStatus) {
 
   const mcpTools = mcpManager.getAllTools();
   const allTools = [...TOOLS, ...mcpTools];
-  const MAX_TOOL_ROUNDS = 8;
+  const MAX_TOOL_ROUNDS = 50; // 增加工具调用轮数上限，支持复杂任务
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     try {

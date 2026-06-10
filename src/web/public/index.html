@@ -1,0 +1,260 @@
+            : '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+      document.getElementById('agents-list').innerHTML = html;
+    }
+
+    // 更新定时任务列表
+    function updateCron(tasks) {
+      if (!tasks || tasks.length === 0) {
+        document.getElementById('cron-list').innerHTML = '<div class="empty-state">暂无定时任务</div>';
+        return;
+      }
+
+      const html = `
+        <table class="table">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>调度</th>
+              <th>状态</th>
+              <th>上次运行</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tasks.map(t => `
+              <tr>
+                <td><strong>${t.name}</strong></td>
+                <td><code>${t.schedule}</code></td>
+                <td><span class="badge ${t.enabled ? 'badge-success' : 'badge-warning'}">${t.enabled ? '启用' : '禁用'}</span></td>
+                <td>${t.lastRun ? new Date(t.lastRun).toLocaleString('zh-CN') : '-'}</td>
+                <td>
+                  <button class="btn btn-sm btn-primary" onclick="runCronTask('${t.name}')">执行</button>
+                  <button class="btn btn-sm ${t.enabled ? 'btn-warning' : 'btn-success'}" onclick="toggleCronTask('${t.name}', ${!t.enabled})">${t.enabled ? '禁用' : '启用'}</button>
+                  <button class="btn btn-sm btn-danger" onclick="deleteCronTask('${t.name}')">删除</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+      document.getElementById('cron-list').innerHTML = html;
+    }
+
+    // 更新 MCP 工具列表
+    function updateMCP(mcps) {
+      if (!mcps || mcps.length === 0) {
+        document.getElementById('mcp-list').innerHTML = '<div class="empty-state">暂无 MCP 工具</div>';
+        return;
+      }
+
+      const html = mcps.map(m => `
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">${m.name}</span>
+            <span class="badge ${m.connected ? 'badge-success' : 'badge-error'}">${m.connected ? '已连接' : '未连接'}</span>
+          </div>
+          <div>
+            <strong>工具:</strong> ${m.tools?.join(', ') || '无'}
+          </div>
+          <div style="margin-top: 10px;">
+            <button class="btn btn-sm btn-danger" onclick="deleteMCP('${m.name}')">删除</button>
+          </div>
+        </div>
+      `).join('');
+      document.getElementById('mcp-list').innerHTML = html;
+    }
+
+    // 格式化运行时间
+    function formatUptime(seconds) {
+      if (seconds < 60) return `${seconds}秒`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时`;
+      return `${Math.floor(seconds / 86400)}天`;
+    }
+
+    // 发送对话消息
+    async function sendChatMessage() {
+      const input = document.getElementById('chat-input');
+      const message = input.value.trim();
+      if (!message) return;
+
+      addChatMessage('user', message);
+      input.value = '';
+
+      try {
+        const resp = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        });
+        const data = await resp.json();
+        
+        if (data.success) {
+          addChatMessage('assistant', data.result);
+        } else {
+          addChatMessage('assistant', `错误: ${data.error}`);
+        }
+      } catch (err) {
+        addChatMessage('assistant', `请求失败: ${err.message}`);
+      }
+    }
+
+    // 添加聊天消息
+    function addChatMessage(role, content) {
+      const messages = document.getElementById('chat-messages');
+      const div = document.createElement('div');
+      div.className = `chat-message ${role}`;
+      div.innerHTML = `<div class="bubble">${escapeHtml(content)}</div>`;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    // 处理回车键
+    function handleChatKeypress(event) {
+      if (event.key === 'Enter') {
+        sendChatMessage();
+      }
+    }
+
+    // 转义 HTML
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // 执行定时任务
+    async function runCronTask(name) {
+      try {
+        const resp = await fetch(`/api/cron/${name}/run`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+          alert(`任务 ${name} 执行成功`);
+          loadStatus();
+        } else {
+          alert(`任务 ${name} 执行失败: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`请求失败: ${err.message}`);
+      }
+    }
+
+    // 切换定时任务状态
+    async function toggleCronTask(name, enable) {
+      try {
+        const resp = await fetch(`/api/cron/${name}/${enable ? 'enable' : 'disable'}`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+          loadStatus();
+        } else {
+          alert(`操作失败: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`请求失败: ${err.message}`);
+      }
+    }
+
+    // 删除定时任务
+    async function deleteCronTask(name) {
+      if (!confirm(`确定要删除任务 ${name} 吗？`)) return;
+      
+      try {
+        const resp = await fetch(`/api/cron/${name}`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.success) {
+          loadStatus();
+        } else {
+          alert(`删除失败: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`请求失败: ${err.message}`);
+      }
+    }
+
+    // 删除 MCP 工具
+    async function deleteMCP(name) {
+      if (!confirm(`确定要删除 MCP 工具 ${name} 吗？`)) return;
+      
+      try {
+        const resp = await fetch(`/api/mcp/${name}`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.success) {
+          loadStatus();
+        } else {
+          alert(`删除失败: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`请求失败: ${err.message}`);
+      }
+    }
+
+    // 显示添加定时任务对话框
+    function showAddCronDialog() {
+      const name = prompt('任务名称:');
+      if (!name) return;
+      
+      const schedule = prompt('Cron 表达式 (例如: 0 6 * * *):');
+      if (!schedule) return;
+      
+      const promptText = prompt('执行的提示词:');
+      if (!promptText) return;
+      
+      addCronTask(name, schedule, promptText);
+    }
+
+    // 添加定时任务
+    async function addCronTask(name, schedule, prompt) {
+      try {
+        const resp = await fetch('/api/cron', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, schedule, prompt }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          loadStatus();
+        } else {
+          alert(`添加失败: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`请求失败: ${err.message}`);
+      }
+    }
+
+    // 显示添加 MCP 对话框
+    function showAddMCPDialog() {
+      const name = prompt('MCP 名称:');
+      if (!name) return;
+      
+      const url = prompt('SSE URL:');
+      if (!url) return;
+      
+      addMCP(name, url);
+    }
+
+    // 添加 MCP 工具
+    async function addMCP(name, url) {
+      try {
+        const resp = await fetch('/api/mcp/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, url }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          loadStatus();
+        } else {
+          alert(`添加失败: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`请求失败: ${err.message}`);
+      }
+    }
+  </script>
+</body>
+</html>
