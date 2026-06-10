@@ -58,6 +58,27 @@
 
 ## 迁移步骤
 
+### 0. 从 GitHub 克隆配置
+
+```bash
+# 安装 gh CLI
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+sudo apt update && sudo apt install gh
+
+# 登录 GitHub
+gh auth login
+
+# 克隆 Claude 配置（私有仓库）
+gh repo clone lpc0387/claude-config ~/.claude
+
+# 克隆 IM Bridge
+gh repo clone lpc0387/im-bridge ~/im-bridge
+
+# 更新 token
+sed -i 's/YOUR_TOKEN_HERE/你的真实token/' ~/.claude/settings.json
+```
+
 ### 1. 新服务器准备
 
 ```bash
