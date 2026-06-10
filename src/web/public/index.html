@@ -138,6 +138,7 @@
       <button class="tab" onclick="switchTab('mcp')">MCP</button>
       <button class="tab" onclick="switchTab('cron')">定时</button>
       <button class="tab" onclick="switchTab('chat')">对话</button>
+      <button class="tab" onclick="switchTab('skills')">Skill</button>
       <button class="tab" onclick="switchTab('setup')">配置</button>
     </div>
 
@@ -202,6 +203,75 @@
         <div class="chat-input">
           <input type="text" id="chat-input" placeholder="输入消息..." onkeypress="if(event.key==='Enter')sendMsg()">
           <button class="btn btn-primary" onclick="sendMsg()">发送</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skill 管理 -->
+    <div class="panel" id="panel-skills">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Skill 管理</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="showImportSkill()">📥 导入</button>
+            <button class="btn btn-success btn-sm" onclick="showCreateSkill()">+ 新建</button>
+          </div>
+        </div>
+        <div id="skills-list">加载中...</div>
+      </div>
+      <!-- Skill 编辑器 -->
+      <div class="card" id="skill-editor-card" style="display:none">
+        <div class="card-header">
+          <span class="card-title" id="skill-editor-title">编辑 Skill</span>
+          <button class="btn btn-sm" onclick="closeSkillEditor()">关闭</button>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-weight:600;font-size:14px">Skill 名称</label>
+          <input type="text" class="form-input" id="skill-name" placeholder="my-skill" style="margin-top:6px">
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-weight:600;font-size:14px">内容（Markdown）</label>
+          <textarea id="skill-content" class="form-input" style="margin-top:6px;min-height:300px;font-family:monospace;font-size:13px;line-height:1.5;resize:vertical"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="saveSkill()">保存</button>
+          <button class="btn btn-danger" onclick="deleteSkill()">删除</button>
+          <span id="skill-editor-status" style="font-size:13px"></span>
+        </div>
+      </div>
+      <!-- 导入面板 -->
+      <div class="card" id="skill-import-card" style="display:none">
+        <div class="card-header">
+          <span class="card-title">📥 导入 Skill</span>
+          <button class="btn btn-sm" onclick="closeSkillImport()">关闭</button>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-weight:600;font-size:14px">来源格式</label>
+          <select id="import-format" class="form-input" style="margin-top:6px">
+            <option value="auto">自动检测</option>
+            <option value="claude-code">Claude Code</option>
+            <option value="codex">Codex (AGENTS.md)</option>
+            <option value="gemini">Gemini</option>
+            <option value="cursor">Cursor (.cursorrules)</option>
+            <option value="windsurf">Windsurf (.windsurfrules)</option>
+            <option value="plain">纯文本</option>
+          </select>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-weight:600;font-size:14px">Skill 名称（留空自动生成）</label>
+          <input type="text" class="form-input" id="import-name" placeholder="my-imported-skill" style="margin-top:6px">
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-weight:600;font-size:14px">内容</label>
+          <textarea id="import-content" class="form-input" style="margin-top:6px;min-height:200px;font-family:monospace;font-size:13px;resize:vertical" placeholder="粘贴 Skill 内容（支持 Claude Code / Codex / Gemini / Cursor / Windsurf 格式）"></textarea>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-weight:600;font-size:14px">或从文件导入</label>
+          <input type="file" id="import-file" accept=".md,.txt,.rules" style="margin-top:6px;font-size:14px" onchange="handleImportFile(this)">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="importSkill()">导入并适配</button>
+          <span id="import-status" style="font-size:13px"></span>
         </div>
       </div>
     </div>
@@ -519,9 +589,156 @@
       }
     }
 
+    // ========== Skill 管理 ==========
+    let currentEditSkill = null;
+
+    async function loadSkills() {
+      try {
+        const resp = await fetch('/api/skills');
+        const skills = await resp.json();
+        if (skills.length === 0) {
+          document.getElementById('skills-list').innerHTML = '<div class="empty">暂无 Skill，点击"新建"或"导入"创建</div>';
+          return;
+        }
+        let html = '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))">';
+        for (const s of skills) {
+          html += `<div class="card" style="cursor:pointer" onclick="openSkill('${s.name}')">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <strong style="font-size:15px">/${s.name}</strong>
+              <span class="badge badge-info">${s.type === 'directory' ? '📁' : '📄'}</span>
+            </div>
+            <div style="font-size:13px;color:#666;line-height:1.4;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${s.description || '无描述'}</div>
+            ${s.size ? `<div style="font-size:11px;color:#999;margin-top:6px">${(s.size/1024).toFixed(1)}KB</div>` : ''}
+          </div>`;
+        }
+        html += '</div>';
+        document.getElementById('skills-list').innerHTML = html;
+      } catch (err) {
+        document.getElementById('skills-list').innerHTML = '<div class="empty">加载失败</div>';
+      }
+    }
+
+    async function openSkill(name) {
+      currentEditSkill = name;
+      try {
+        const resp = await fetch(`/api/skills/${name}`);
+        const data = await resp.json();
+        document.getElementById('skill-editor-title').textContent = `编辑 /${name}`;
+        document.getElementById('skill-name').value = name;
+        document.getElementById('skill-name').disabled = true;
+        document.getElementById('skill-content').value = data.content;
+        document.getElementById('skill-editor-card').style.display = 'block';
+        document.getElementById('skill-editor-status').textContent = '';
+        document.getElementById('skill-editor-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (err) {
+        alert('加载失败: ' + err.message);
+      }
+    }
+
+    function showCreateSkill() {
+      currentEditSkill = null;
+      document.getElementById('skill-editor-title').textContent = '新建 Skill';
+      document.getElementById('skill-name').value = '';
+      document.getElementById('skill-name').disabled = false;
+      document.getElementById('skill-content').value = '---\nname: my-skill\ndescription: "描述这个 Skill 的作用"\nmetadata:\n  type: skill\n---\n\n# Skill 标题\n\n在这里写 Skill 的指令内容...';
+      document.getElementById('skill-editor-card').style.display = 'block';
+      document.getElementById('skill-editor-status').textContent = '';
+      document.getElementById('skill-editor-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function closeSkillEditor() {
+      document.getElementById('skill-editor-card').style.display = 'none';
+    }
+
+    async function saveSkill() {
+      const name = document.getElementById('skill-name').value.trim();
+      const content = document.getElementById('skill-content').value;
+      if (!name) { document.getElementById('skill-editor-status').innerHTML = '<span style="color:#dc3545">名称不能为空</span>'; return; }
+      if (!content) { document.getElementById('skill-editor-status').innerHTML = '<span style="color:#dc3545">内容不能为空</span>'; return; }
+
+      document.getElementById('skill-editor-status').innerHTML = '<span style="color:#666">保存中...</span>';
+      try {
+        const resp = await fetch(`/api/skills/${name}`, {
+          method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ content })
+        });
+        const data = await resp.json();
+        if (data.success) {
+          document.getElementById('skill-editor-status').innerHTML = '<span style="color:#28a745">✅ 已保存</span>';
+          loadSkills();
+        } else {
+          document.getElementById('skill-editor-status').innerHTML = `<span style="color:#dc3545">❌ ${data.error}</span>`;
+        }
+      } catch (err) {
+        document.getElementById('skill-editor-status').innerHTML = `<span style="color:#dc3545">❌ ${err.message}</span>`;
+      }
+    }
+
+    async function deleteSkill() {
+      const name = document.getElementById('skill-name').value;
+      if (!name || !confirm(`确定删除 Skill /${name}？`)) return;
+      try {
+        await fetch(`/api/skills/${name}`, { method: 'DELETE' });
+        closeSkillEditor();
+        loadSkills();
+      } catch (err) { alert('删除失败: ' + err.message); }
+    }
+
+    // 导入
+    function showImportSkill() {
+      document.getElementById('skill-import-card').style.display = 'block';
+      document.getElementById('import-status').textContent = '';
+      document.getElementById('skill-import-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    function closeSkillImport() {
+      document.getElementById('skill-import-card').style.display = 'none';
+    }
+
+    function handleImportFile(input) {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        document.getElementById('import-content').value = e.target.result;
+        if (!document.getElementById('import-name').value) {
+          document.getElementById('import-name').value = file.name.replace(/\.(md|txt|rules)$/, '').replace(/[^a-z0-9-_]/gi, '-');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    async function importSkill() {
+      const content = document.getElementById('import-content').value.trim();
+      const format = document.getElementById('import-format').value;
+      const name = document.getElementById('import-name').value.trim() || undefined;
+
+      if (!content) {
+        document.getElementById('import-status').innerHTML = '<span style="color:#dc3545">内容不能为空</span>';
+        return;
+      }
+
+      document.getElementById('import-status').innerHTML = '<span style="color:#666">导入中...</span>';
+      try {
+        const resp = await fetch('/api/skills/import', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ content, sourceFormat: format, name })
+        });
+        const data = await resp.json();
+        if (data.success) {
+          document.getElementById('import-status').innerHTML = `<span style="color:#28a745">✅ 已导入为 /${data.name}（格式: ${data.format}）</span>`;
+          loadSkills();
+          setTimeout(closeSkillImport, 2000);
+        } else {
+          document.getElementById('import-status').innerHTML = `<span style="color:#dc3545">❌ ${data.error}</span>`;
+        }
+      } catch (err) {
+        document.getElementById('import-status').innerHTML = `<span style="color:#dc3545">❌ ${err.message}</span>`;
+      }
+    }
+
     // 初始化
     loadStatus();
     loadSetupList();
+    loadSkills();
     setInterval(loadStatus, 10000);
   </script>
 </body>

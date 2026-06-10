@@ -1,3 +1,4 @@
+import fs from 'fs/promises';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -249,6 +250,93 @@ export class WebUI {
       setTimeout(() => process.exit(0), 1000);
     });
 
+    // ========== Skill 管理 API ==========
+
+    const skillsDir = path.join(process.env.HOME || '/root', '.claude', 'skills');
+
+    // 列出所有 Skill
+    this.app.get('/api/skills', async (req, res) => {
+      try {
+        const skills = [];
+        const entries = await fs.readdir(skillsDir, { withFileTypes: true }).catch(() => []);
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            // 子目录形式的 skill
+            const mainFile = path.join(skillsDir, entry.name, 'skill.md');
+            try {
+              const content = await fs.readFile(mainFile, 'utf8');
+              const meta = this._parseSkillMeta(content);
+              skills.push({ name: entry.name, type: 'directory', description: meta.description, path: entry.name });
+            } catch {}
+          } else if (entry.name.endsWith('.md')) {
+            const name = entry.name.replace('.md', '');
+            const content = await fs.readFile(path.join(skillsDir, entry.name), 'utf8');
+            const meta = this._parseSkillMeta(content);
+            skills.push({ name, type: 'file', description: meta.description, path: entry.name, size: content.length });
+          }
+        }
+        res.json(skills);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // 导入 Skill（自动适配格式）— 必须在 :name 路由之前
+    this.app.post('/api/skills/import', async (req, res) => {
+      try {
+        const { content, sourceFormat, name } = req.body;
+        if (!content) return res.status(400).json({ error: '内容不能为空' });
+
+        const skillName = name || 'imported-' + Date.now().toString(36);
+        const adapted = this._adaptSkillFormat(content, sourceFormat || 'auto');
+
+        await fs.mkdir(skillsDir, { recursive: true });
+        const filePath = path.join(skillsDir, `${skillName}.md`);
+        await fs.writeFile(filePath, adapted, 'utf8');
+
+        const meta = this._parseSkillMeta(adapted);
+        res.json({ success: true, name: skillName, description: meta.description, format: sourceFormat });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // 获取 Skill 内容
+    this.app.get('/api/skills/:name', async (req, res) => {
+      try {
+        const filePath = path.join(skillsDir, `${req.params.name}.md`);
+        const content = await fs.readFile(filePath, 'utf8');
+        res.json({ name: req.params.name, content, meta: this._parseSkillMeta(content) });
+      } catch (err) {
+        res.status(404).json({ error: 'Skill 不存在' });
+      }
+    });
+
+    // 保存 Skill
+    this.app.post('/api/skills/:name', async (req, res) => {
+      try {
+        const { content } = req.body;
+        if (!content) return res.status(400).json({ error: '内容不能为空' });
+        await fs.mkdir(skillsDir, { recursive: true });
+        const filePath = path.join(skillsDir, `${req.params.name}.md`);
+        await fs.writeFile(filePath, content, 'utf8');
+        res.json({ success: true, message: `Skill ${req.params.name} 已保存` });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // 删除 Skill
+    this.app.delete('/api/skills/:name', async (req, res) => {
+      try {
+        const filePath = path.join(skillsDir, `${req.params.name}.md`);
+        await fs.unlink(filePath);
+        res.json({ success: true });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // ========== 个人微信扫码登录 API ==========
 
     // 获取二维码
@@ -365,6 +453,181 @@ export class WebUI {
         { key: 'GOOGLECHAT_PROJECT_ID', label: 'Project ID', hint: 'Google Cloud Console → 项目选择器 → 项目ID', placeholder: '' },
       ]},
     };
+  }
+
+  /**
+   * 解析 Skill 元数据
+   */
+  _parseSkillMeta(content) {
+    const meta = { name: '', description: '', type: 'skill' };
+
+    // 解析 YAML frontmatter
+    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (fmMatch) {
+      const fm = fmMatch[1];
+      const nameMatch = fm.match(/^name:\s*(.+)$/m);
+      const descMatch = fm.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+      const typeMatch = fm.match(/^metadata:[\s\S]*?type:\s*(.+)$/m);
+      if (nameMatch) meta.name = nameMatch[1].trim();
+      if (descMatch) meta.description = descMatch[1].trim();
+      if (typeMatch) meta.type = typeMatch[1].trim();
+    }
+
+    // 从正文提取标题
+    if (!meta.description) {
+      const titleMatch = content.match(/^#\s+(.+)$/m);
+      if (titleMatch) meta.description = titleMatch[1].trim();
+    }
+
+    return meta;
+  }
+
+  /**
+   * 适配不同 Agent 的 Skill 格式
+   * 支持: claude-code, codex, gemini, cursor, windsurf, auto
+   */
+  _adaptSkillFormat(content, sourceFormat) {
+    // 自动检测格式
+    if (sourceFormat === 'auto') {
+      sourceFormat = this._detectSkillFormat(content);
+    }
+
+    switch (sourceFormat) {
+      case 'claude-code':
+        return this._adaptFromClaudeCode(content);
+      case 'codex':
+        return this._adaptFromCodex(content);
+      case 'gemini':
+        return this._adaptFromGemini(content);
+      case 'cursor':
+        return this._adaptFromCursor(content);
+      case 'windsurf':
+        return this._adaptFromWindsurf(content);
+      default:
+        return this._normalizeSkill(content);
+    }
+  }
+
+  /**
+   * 自动检测 Skill 格式
+   */
+  _detectSkillFormat(content) {
+    if (content.includes('metadata:') && content.includes('type:')) return 'claude-code';
+    if (content.includes('# AGENTS.md') || content.includes('## Agent')) return 'codex';
+    if (content.includes('GEMINI.md') || content.includes('context:')) return 'gemini';
+    if (content.includes('.cursorrules') || content.includes('cursor_rules')) return 'cursor';
+    if (content.includes('.windsurfrules')) return 'windsurf';
+    return 'plain';
+  }
+
+  /**
+   * 从 Claude Code 格式适配（标准格式，基本不用改）
+   */
+  _adaptFromClaudeCode(content) {
+    return content;
+  }
+
+  /**
+   * 从 Codex/AGENTS.md 格式适配
+   * Codex 格式: ## Agent Name + 描述 + 指令
+   */
+  _adaptFromCodex(content) {
+    const titleMatch = content.match(/^#\s+(.+)$/m);
+    const title = titleMatch ? titleMatch[1] : 'imported-skill';
+    const body = content.replace(/^#\s+.+$/m, '').trim();
+
+    return `---
+name: ${title.toLowerCase().replace(/\s+/g, '-')}
+description: "${title}"
+metadata:
+  type: skill
+  source: codex
+---
+
+${body}`;
+  }
+
+  /**
+   * 从 Gemini/GEMINI.md 格式适配
+   * Gemini 格式: context 文件 + 指令
+   */
+  _adaptFromGemini(content) {
+    const lines = content.split('\n');
+    let title = 'imported-skill';
+    let description = '';
+    const body = [];
+
+    for (const line of lines) {
+      if (line.startsWith('# ') && !title) {
+        title = line.slice(2).trim();
+      } else if (line.startsWith('context:') || line.startsWith('description:')) {
+        description = line.split(':').slice(1).join(':').trim();
+      } else {
+        body.push(line);
+      }
+    }
+
+    return `---
+name: ${title.toLowerCase().replace(/\s+/g, '-')}
+description: "${description || title}"
+metadata:
+  type: skill
+  source: gemini
+---
+
+# ${title}
+
+${body.join('\n').trim()}`;
+  }
+
+  /**
+   * 从 Cursor/.cursorrules 格式适配
+   */
+  _adaptFromCursor(content) {
+    return `---
+name: cursor-import
+description: "从 Cursor 导入的规则"
+metadata:
+  type: skill
+  source: cursor
+---
+
+${content}`;
+  }
+
+  /**
+   * 从 Windsurf/.windsurfrules 格式适配
+   */
+  _adaptFromWindsurf(content) {
+    return `---
+name: windsurf-import
+description: "从 Windsurf 导入的规则"
+metadata:
+  type: skill
+  source: windsurf
+---
+
+${content}`;
+  }
+
+  /**
+   * 通用标准化（无格式的纯文本）
+   */
+  _normalizeSkill(content) {
+    // 如果已有 frontmatter，不动
+    if (content.startsWith('---\n')) return content;
+    // 提取第一个标题作为描述
+    const titleMatch = content.match(/^#\s+(.+)$/m);
+    const title = titleMatch ? titleMatch[1] : 'imported-skill';
+
+    return `---
+name: ${title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-')}
+description: "${title}"
+metadata:
+  type: skill
+---
+
+${content}`;
   }
 
   _readEnv() {
