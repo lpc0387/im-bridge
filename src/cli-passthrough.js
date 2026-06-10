@@ -3,7 +3,6 @@ import { config } from './config.js';
 
 /**
  * 解析 @@命令 格式: @@密码 命令内容
- * 返回 { valid, password, command, error }
  */
 export function parseCliCommand(message) {
   const trimmed = message.trim();
@@ -37,26 +36,22 @@ export function verifyPassword(inputPassword) {
 /**
  * 执行 Claude Code CLI 命令
  * @param {string} command - 用户的 prompt
+ * @param {function} onStatus - 状态回调
  * @param {number} timeoutMs - 超时毫秒数
- * @returns {Promise<string>} CLI 输出
+ * @returns {Promise<{output: string, duration: number}>}
  */
-export function executeCliCommand(command, timeoutMs = 300000) {
+export function executeCliCommand(command, onStatus, timeoutMs = 300000) {
   return new Promise((resolve, reject) => {
     const args = ['-p', command, '--output-format', 'text'];
     const env = { ...process.env };
 
-    // 确保代理配置传递给 CLI
-    if (config.anthropic.authToken) {
-      env.ANTHROPIC_AUTH_TOKEN = config.anthropic.authToken;
-    }
-    if (config.anthropic.baseUrl) {
-      env.ANTHROPIC_BASE_URL = config.anthropic.baseUrl;
-    }
-    if (config.anthropic.model) {
-      env.ANTHROPIC_MODEL = config.anthropic.model;
-    }
+    if (config.anthropic.authToken) env.ANTHROPIC_AUTH_TOKEN = config.anthropic.authToken;
+    if (config.anthropic.baseUrl) env.ANTHROPIC_BASE_URL = config.anthropic.baseUrl;
+    if (config.anthropic.model) env.ANTHROPIC_MODEL = config.anthropic.model;
 
+    const startTime = Date.now();
     console.log(`[CLI] 执行: claude -p "${command.substring(0, 60)}..."`);
+    if (onStatus) onStatus('正在启动 CLI...');
 
     const proc = spawn('claude', args, {
       env,
@@ -66,10 +61,17 @@ export function executeCliCommand(command, timeoutMs = 300000) {
 
     let stdout = '';
     let stderr = '';
+    let lastProgressTime = startTime;
 
     proc.stdout.on('data', (data) => {
       stdout += data.toString();
-      // 限制输出长度，防止 OOM
+      // 每 10 秒发送一次进度
+      const now = Date.now();
+      if (onStatus && now - lastProgressTime > 10000) {
+        lastProgressTime = now;
+        const elapsed = Math.round((now - startTime) / 1000);
+        onStatus(`CLI 执行中... (${elapsed}s)`);
+      }
       if (stdout.length > 100000) {
         proc.kill();
         stdout += '\n...(输出被截断，超过 100KB)';
@@ -87,10 +89,11 @@ export function executeCliCommand(command, timeoutMs = 300000) {
 
     proc.on('close', (code) => {
       clearTimeout(timer);
+      const duration = Math.round((Date.now() - startTime) / 1000);
       if (code === 0 || stdout.length > 0) {
-        resolve(stdout.trim() || '(无输出)');
+        resolve({ output: stdout.trim() || '(无输出)', duration });
       } else {
-        reject(new Error(`CLI 退出码 ${code}: ${stderr.trim()}`));
+        reject(new Error(`CLI 退出码 ${code} (${duration}s): ${stderr.trim()}`));
       }
     });
 
@@ -104,9 +107,10 @@ export function executeCliCommand(command, timeoutMs = 300000) {
 /**
  * 处理完整的 @@命令 流程
  * @param {string} message - 原始消息
- * @returns {Promise<string>} 回复内容
+ * @param {function} onStatus - 状态回调
+ * @returns {Promise<string>}
  */
-export async function handleCliPassthrough(message) {
+export async function handleCliPassthrough(message, onStatus) {
   const parsed = parseCliCommand(message);
 
   if (!parsed.valid) {
@@ -118,9 +122,10 @@ export async function handleCliPassthrough(message) {
   }
 
   try {
-    const result = await executeCliCommand(parsed.command);
-    return `🖥️ CLI 执行结果:\n\n${result}`;
+    if (onStatus) onStatus(`🖥️ 执行 CLI: ${parsed.command.substring(0, 50)}...`);
+    const { output, duration } = await executeCliCommand(parsed.command, onStatus);
+    return `🖥️ CLI 执行完成 (${duration}s)\n\n${output}`;
   } catch (err) {
-    return `❌ CLI 执行失败: ${err.message}`;
+    return `❌ ${err.message}`;
   }
 }

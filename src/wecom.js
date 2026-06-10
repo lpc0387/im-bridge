@@ -294,7 +294,14 @@ export function startWecomServer(app) {
       // 2. @@命令 — CLI 透传
       if (content.startsWith('@@')) {
         console.log(`[WeCom] CLI 透传命令`);
-        const reply = await handleCliPassthrough(content);
+        let lastCliStatusTime = 0;
+        const reply = await handleCliPassthrough(content, (status) => {
+          const now = Date.now();
+          if (now - lastCliStatusTime > 5000) {
+            lastCliStatusTime = now;
+            sendAppMessage(fromUser, `⏳ ${status}`).catch(() => {});
+          }
+        });
         await sendAppMessage(fromUser, reply);
         return;
       }

@@ -43,7 +43,9 @@ app.post('/chat', async (req, res) => {
 
     // 2. @@命令 — CLI 透传
     if (message.startsWith('@@')) {
-      const reply = await handleCliPassthrough(message);
+      const reply = await handleCliPassthrough(message, (status) => {
+        console.log(`[CLI] ${status}`);
+      });
       return res.json({ reply });
     }
 
