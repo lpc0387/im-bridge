@@ -3,7 +3,9 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 
-const CONFIG_PATH = 'D:/im-bridge/mcp-config.json';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CONFIG_PATH = path.join(__dirname, '..', 'mcp-config.json');
 
 // ========== MCP SSE 客户端 ==========
 
