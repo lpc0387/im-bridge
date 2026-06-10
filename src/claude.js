@@ -1,7 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import fs from 'fs/promises';
 import path from 'path';
-import { execSync } from 'child_process';
 import { config } from './config.js';
 import { mcpManager } from './mcp-client.js';
 import { sessionManager } from './session.js';
@@ -36,6 +35,13 @@ IM 回复规则（极重要）：
 - 直接给出最终结果和结论
 - 如果需要说明做了什么，用一句话概括
 - 代码块、列表等格式要简洁，适合手机阅读
+
+权限规则（极重要）：
+- 你只能读取文件，不能写入、修改、删除任何文件（create_skill 和 install_mcp 除外）
+- 如果用户要求你写入文件、修改代码、执行命令等写操作，必须回复：
+  "此操作需要写入权限，请使用 CLI 模式：@@密码 命令"
+- 只有 create_skill（创建 Skill）和 install_mcp（安装 MCP）这两个工具可以写入文件
+- 这是安全限制，不可绕过
 
 ## Skill 系统
 
@@ -83,30 +89,6 @@ const TOOLS = [
         path: { type: 'string', description: '目录路径，默认为主目录' },
       },
       required: [],
-    },
-  },
-  {
-    name: 'run_command',
-    description: '在服务器上执行 shell 命令。禁止执行危险命令。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        command: { type: 'string', description: '要执行的命令' },
-        cwd: { type: 'string', description: '工作目录，默认为主目录' },
-      },
-      required: ['command'],
-    },
-  },
-  {
-    name: 'write_file',
-    description: '向服务器写入文件。',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: '文件路径' },
-        content: { type: 'string', description: '文件内容' },
-      },
-      required: ['path', 'content'],
     },
   },
   {
@@ -211,24 +193,6 @@ async function executeTool(name, input) {
         const dirPath = resolvePath(input.path);
         const entries = await fs.readdir(dirPath, { withFileTypes: true });
         return entries.map((e) => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`).join('\n');
-      }
-
-      case 'run_command': {
-        const cmd = input.command;
-        const dangerous = ['format', 'del /s', 'rd /s', 'rmdir /s', 'rm -rf /', 'rm -rf ~', 'shutdown', 'mkfs', 'dd if=', ':(){', 'chmod -R 777 /'];
-        if (dangerous.some((d) => cmd.toLowerCase().includes(d))) {
-          return '❌ 拒绝执行：该命令可能造成危险';
-        }
-        const cwd = resolvePath(input.cwd) || HOME_DIR;
-        const output = execSync(cmd, { cwd, encoding: 'utf8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] });
-        return output.length > 3000 ? output.substring(0, 3000) + '\n...(输出被截断)' : output;
-      }
-
-      case 'write_file': {
-        const filePath = resolvePath(input.path);
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
-        await fs.writeFile(filePath, input.content, 'utf8');
-        return `✅ 已写入文件: ${filePath}`;
       }
 
       case 'list_skills': {
@@ -373,7 +337,7 @@ export async function chat(userId, message, onStatus) {
 
   const mcpTools = mcpManager.getAllTools();
   const allTools = [...TOOLS, ...mcpTools];
-  const MAX_TOOL_ROUNDS = 50; // 增加工具调用轮数上限，支持复杂任务
+  const MAX_TOOL_ROUNDS = 12; // 工具调用轮数上限（普通对话足够，复杂任务用 @@命令 调 CLI）
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     try {

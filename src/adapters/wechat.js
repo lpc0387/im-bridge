@@ -202,6 +202,60 @@ export class WeChatAdapter extends BaseAdapter {
   }
 
   /**
+   * 注册 Express 路由（Webhook 回调）
+   */
+  registerRoutes(app) {
+    // GET - URL 验证
+    app.get('/wecom/callback', (req, res) => {
+      const { msg_signature, timestamp, nonce, echostr } = req.query;
+      console.log('[WeCom] 收到 URL 验证请求');
+      if (!this.verifySignature(msg_signature, timestamp, nonce, echostr)) {
+        return res.status(403).send('签名验证失败');
+      }
+      const decrypted = this.decrypt(echostr);
+      console.log('[WeCom] ✅ URL 验证成功');
+      res.send(decrypted);
+    });
+
+    // POST - 接收用户消息
+    app.post('/wecom/callback', async (req, res) => {
+      const { msg_signature, timestamp, nonce } = req.query;
+      try {
+        let body = '';
+        req.setEncoding('utf8');
+        for await (const chunk of req) body += chunk;
+
+        const encryptMatch = body.match(/<Encrypt><!\[CDATA\[(.*?)\]\]><\/Encrypt>/);
+        if (!encryptMatch) return res.send('success');
+
+        const encrypt = encryptMatch[1];
+        if (!this.verifySignature(msg_signature, timestamp, nonce, encrypt)) {
+          return res.status(403).send('签名验证失败');
+        }
+
+        const xml = this.decrypt(encrypt);
+        const fromUser = xml.match(/<FromUserName><!\[CDATA\[(.*?)\]\]><\/FromUserName>/)?.[1];
+        const msgType = xml.match(/<MsgType><!\[CDATA\[(.*?)\]\]><\/MsgType>/)?.[1];
+        const content = xml.match(/<Content><!\[CDATA\[(.*?)\]\]><\/Content>/)?.[1];
+
+        res.send('success');
+
+        if (!fromUser || msgType !== 'text' || !content) {
+          console.log(`[WeCom] 忽略非文本消息 (type=${msgType})`);
+          return;
+        }
+
+        console.log(`[WeCom] 收到 ${fromUser}: ${content.substring(0, 50)}...`);
+        this.handleMessage(xml);
+      } catch (err) {
+        console.error('[WeCom] 处理消息失败:', err.message);
+        try { res.send('success'); } catch {}
+      }
+    });
+    console.log('[WeCom] ✅ 回调路由已注册 (/wecom/callback)');
+  }
+
+  /**
    * 启动适配器
    */
   async start() {

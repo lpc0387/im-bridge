@@ -34,7 +34,7 @@ export function verifyPassword(inputPassword) {
  */
 export function executeCliCommand(command, onStatus, timeoutMs = 300000) {
   return new Promise((resolve, reject) => {
-    const args = ['-p', command, '--output-format', 'stream-json', '--verbose'];
+    const args = ['-p', command, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto'];
     const env = { ...process.env };
 
     if (config.anthropic.authToken) env.ANTHROPIC_AUTH_TOKEN = config.anthropic.authToken;
@@ -78,15 +78,31 @@ export function executeCliCommand(command, onStatus, timeoutMs = 300000) {
                 if (name === 'Bash' || name === 'bash' || name === 'run_command') {
                   const cmd = input.command || JSON.stringify(input);
                   bashCommands.push(cmd);
-                  if (onStatus) onStatus(`$ ${cmd.substring(0, 60)}`);
+                  if (onStatus) onStatus(`$ ${cmd.substring(0, 80)}`);
+                } else if (name === 'Write' || name === 'write_file') {
+                  const filePath = input.file_path || input.path || '';
+                  if (onStatus) onStatus(`📝 写入: ${filePath.split('/').pop()}`);
+                } else if (name === 'Edit' || name === 'edit_file') {
+                  const filePath = input.file_path || input.path || '';
+                  if (onStatus) onStatus(`✏️ 编辑: ${filePath.split('/').pop()}`);
+                } else if (name === 'Read' || name === 'read_file') {
+                  const filePath = input.file_path || input.path || '';
+                  if (onStatus) onStatus(`📖 读取: ${filePath.split('/').pop()}`);
                 } else {
-                  bashCommands.push(`[${name}] ${JSON.stringify(input).substring(0, 80)}`);
+                  if (onStatus) onStatus(`🔧 ${name}`);
                 }
               }
               if (block.type === 'text') {
                 finalText = block.text;
               }
             }
+          }
+
+          // 权限请求事件
+          if (msg.type === 'permission_request') {
+            const tool = msg.tool || msg.permission?.tool || '未知操作';
+            const desc = msg.description || msg.permission?.description || '';
+            if (onStatus) onStatus(`🔐 需要权限: ${tool} ${desc.substring(0, 40)}`);
           }
 
           // 最终结果

@@ -1,25 +1,28 @@
 {
   "name": "im-bridge",
-  "version": "3.0.0",
-  "description": "IM Bridge - 通过企业微信/飞书/钉钉/Telegram 在手机上与 Claude 对话",
+  "version": "3.1.0",
+  "description": "IM Bridge - 12 平台 IM 接入 Claude（企微/飞书/钉钉/Telegram/Slack/Discord/LINE/WhatsApp/Signal/Matrix/Teams/Google Chat）",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "setup": "node scripts/setup.js",
+    "setup:status": "node scripts/setup.js --status",
+    "setup:all": "node scripts/setup.js --all"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "express": "^4.21.0",
     "dotenv": "^16.4.7",
-    "ws": "^8.16.0",
-    "node-cron": "^3.0.3"
+    "express": "^4.21.0",
+    "node-cron": "^3.0.3",
+    "ws": "^8.16.0"
   },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/express": "^4.17.21",
-    "@types/ws": "^8.5.10",
-    "@types/node-cron": "^3.0.11"
+  "optionalDependencies": {
+    "@slack/bolt": "^4.1.0",
+    "botbuilder": "^4.22.0",
+    "discord.js": "^14.14.0",
+    "googleapis": "^131.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -28,12 +31,20 @@
     "claude",
     "im",
     "bridge",
+    "ai",
+    "agent",
     "wechat",
     "feishu",
     "dingtalk",
     "telegram",
-    "ai",
-    "agent"
+    "slack",
+    "discord",
+    "line",
+    "whatsapp",
+    "signal",
+    "matrix",
+    "teams",
+    "google-chat"
   ],
   "author": "",
   "license": "MIT"
