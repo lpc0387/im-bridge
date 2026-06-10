@@ -208,6 +208,9 @@ export class FeishuAdapter extends BaseAdapter {
                 send: async (content, options) => {
                   await this.sendMessage(userId, content, options);
                 },
+                sendStatus: async (status) => {
+                  await this.sendMessage(userId, `⏳ ${status}`);
+                },
               });
             }
           } catch (err) {

@@ -150,6 +150,9 @@ export class TelegramAdapter extends BaseAdapter {
           send: async (content, options) => {
             await this.sendMessage(String(userId), content, options);
           },
+          sendStatus: async (status) => {
+            await this.sendMessage(String(chatId), `⏳ ${status}`);
+          },
         });
       }
     }
