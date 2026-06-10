@@ -7,7 +7,7 @@ import { BaseAdapter } from './base.js';
  */
 export class WeChatAdapter extends BaseAdapter {
   constructor(config) {
-    super('wechat', config);
+    super('wecom', config);
     this.corpId = config.corpId;
     this.corpSecret = config.corpSecret;
     this.agentId = config.agentId;

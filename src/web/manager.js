@@ -70,6 +70,17 @@ export class WebUI {
       res.json(this.adapterManager?.getStatus() || []);
     });
 
+    // 重连适配器
+    this.app.post('/api/adapters/:name/reconnect', async (req, res) => {
+      try {
+        if (!this.adapterManager) return res.status(500).json({ error: '适配器管理器未初始化' });
+        const result = await this.adapterManager.reconnect(req.params.name);
+        res.json({ success: true, message: `${req.params.name} 重连成功` });
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+
     // Agent 接口
     this.app.get('/api/agents', (req, res) => {
       res.json(this.agentManager?.getStatus() || []);
@@ -174,7 +185,60 @@ export class WebUI {
     this.app.delete('/api/sessions/:userId/:sessionId', async (req, res) => {
       try {
         await this.sessionManager.deleteSession(req.params.userId, req.params.sessionId);
+        // 如果用户目录为空，删除目录
+        const userDir = path.join(process.env.HOME || '/root', '.im-bridge', 'sessions', req.params.userId);
+        try {
+          const files = await fs.readdir(userDir);
+          if (files.length === 0) await fs.rmdir(userDir);
+        } catch {}
         res.json({ success: true });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // 获取所有用户列表
+    this.app.get('/api/sessions/users', async (req, res) => {
+      try {
+        const sessionsDir = path.join(process.env.HOME || '/root', '.im-bridge', 'sessions');
+        const entries = await fs.readdir(sessionsDir, { withFileTypes: true }).catch(() => []);
+        const users = [];
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const userDir = path.join(sessionsDir, entry.name);
+            const files = await fs.readdir(userDir).catch(() => []);
+            const jsonFiles = files.filter(f => f.endsWith('.json'));
+            let totalMessages = 0;
+            let lastActive = null;
+            for (const f of jsonFiles) {
+              try {
+                const data = JSON.parse(await fs.readFile(path.join(userDir, f), 'utf8'));
+                totalMessages += (data.messages || []).filter(m => m.role === 'user').length;
+                if (data.lastActiveAt && (!lastActive || data.lastActiveAt > lastActive)) {
+                  lastActive = data.lastActiveAt;
+                }
+              } catch {}
+            }
+            users.push({
+              userId: entry.name,
+              sessions: jsonFiles.length,
+              totalMessages,
+              lastActive,
+            });
+          }
+        }
+        users.sort((a, b) => (b.lastActive || '').localeCompare(a.lastActive || ''));
+        res.json(users);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // 获取会话详情
+    this.app.get('/api/sessions/:userId/:sessionId', async (req, res) => {
+      try {
+        const session = await this.sessionManager.getOrCreate(req.params.userId, req.params.sessionId);
+        res.json(session);
       } catch (err) {
         res.status(500).json({ error: err.message });
       }
@@ -200,12 +264,12 @@ export class WebUI {
     });
 
     // 获取指定平台的当前配置状态
-    this.app.get('/api/setup/:platform/status', (req, res) => {
+    this.app.get('/api/setup/:platform/status', async (req, res) => {
       const platform = req.params.platform;
       const template = this._getPlatformTemplates()[platform];
       if (!template) return res.status(404).json({ error: '未知平台' });
 
-      const envContent = this._readEnv();
+      const envContent = await this._readEnv();
       const status = {};
       for (const v of template.vars) {
         const val = this._getEnvVar(envContent, v.key);
@@ -221,11 +285,11 @@ export class WebUI {
         const template = this._getPlatformTemplates()[platform];
         if (!template) return res.status(404).json({ error: '未知平台' });
 
-        let envContent = this._readEnv();
+        let envContent = await this._readEnv();
         for (const [key, value] of Object.entries(req.body)) {
           envContent = this._setEnvVar(envContent, key, value);
         }
-        this._writeEnv(envContent);
+        await this._writeEnv(envContent);
 
         // 安装依赖
         if (template.postInstall) {
@@ -394,7 +458,7 @@ export class WebUI {
    */
   _getPlatformTemplates() {
     return {
-      wechat: { name: '企业微信', icon: '💼', postInstall: null, guide: 'https://work.weixin.qq.com/wework_admin/frame', vars: [
+      wecom: { name: '企业微信', icon: '💼', postInstall: null, guide: 'https://work.weixin.qq.com/wework_admin/frame', vars: [
         { key: 'WECOM_CORPID', label: 'CorpID', hint: '企微后台 → 我的企业 → 企业信息最下方', placeholder: 'ww4a417a7419e691c5' },
         { key: 'WECOM_CORPSECRET', label: 'CorpSecret', hint: '企微后台 → 应用管理 → 自建应用 → Secret', placeholder: '' },
         { key: 'WECOM_AGENTID', label: 'AgentId', hint: '企微后台 → 应用管理 → 自建应用 → AgentId', placeholder: '1000002' },
@@ -630,14 +694,14 @@ metadata:
 ${content}`;
   }
 
-  _readEnv() {
+  async _readEnv() {
     try {
-      return fs.readFileSync(path.join(process.cwd(), '.env'), 'utf8');
+      return await fs.readFile(path.join(process.cwd(), '.env'), 'utf8');
     } catch { return ''; }
   }
 
-  _writeEnv(content) {
-    fs.writeFileSync(path.join(process.cwd(), '.env'), content, 'utf8');
+  async _writeEnv(content) {
+    await fs.writeFile(path.join(process.cwd(), '.env'), content, 'utf8');
   }
 
   _getEnvVar(content, key) {

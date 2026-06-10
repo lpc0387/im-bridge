@@ -25,7 +25,7 @@ const webUI = new WebUI({ port: config.port + 1 });
 // ========== 配置向导流程 ==========
 
 const PLATFORMS = {
-  wechat: { name: '企业微信', icon: '💼', vars: [
+  wecom: { name: '企业微信', icon: '💼', vars: [
     { key: 'WECOM_CORPID', label: 'CorpID' },
     { key: 'WECOM_CORPSECRET', label: 'CorpSecret' },
     { key: 'WECOM_AGENTID', label: 'AgentId' },
@@ -364,7 +364,7 @@ async function main() {
 
   // 初始化适配器（12 个平台）
   console.log('🔌 初始化 IM 适配器...');
-  adapterManager.registerWeChat(config.wecom);
+  adapterManager.registerWecom(config.wecom);
   adapterManager.registerWeixin(config.weixin);
   adapterManager.registerFeishu(config.feishu);
   adapterManager.registerDingTalk(config.dingtalk);

@@ -1,7 +1,7 @@
 {
   "name": "im-bridge",
-  "version": "3.1.0",
-  "description": "IM Bridge - 12 平台 IM 接入 Claude（企微/飞书/钉钉/Telegram/Slack/Discord/LINE/WhatsApp/Signal/Matrix/Teams/Google Chat）",
+  "version": "3.2.0",
+  "description": "IM Bridge - 13 平台 IM 接入 Claude（企微/个人微信/飞书/钉钉/Telegram/Slack/Discord/LINE/WhatsApp/Signal/Matrix/Teams/Google Chat）",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
@@ -19,7 +19,7 @@
     "ws": "^8.16.0"
   },
   "optionalDependencies": {
-    "@slack/bolt": "^4.1.0",
+    "@slack/bolt": "^4.7.3",
     "botbuilder": "^4.22.0",
     "discord.js": "^14.14.0",
     "googleapis": "^131.0.0"

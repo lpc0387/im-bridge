@@ -12,7 +12,7 @@ export class CronManager {
     this.agentManager = null;
     this.adapterManager = null;
     this.notifyUserId = config.notifyUserId;
-    this.notifyPlatform = config.notifyPlatform || 'wechat';
+    this.notifyPlatform = config.notifyPlatform || 'wecom';
   }
 
   /**

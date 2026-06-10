@@ -163,19 +163,30 @@ export class TelegramAdapter extends BaseAdapter {
    */
   async startPolling() {
     this.polling = true;
+    let failCount = 0;
+    const maxFails = 5;
     console.log('[Telegram] 启动长轮询...');
 
     while (this.polling) {
       try {
         const updates = await this.getUpdates();
         this.retryDelay = 1000;
+        failCount = 0;
+        this.connected = true;
 
         for (const update of updates) {
           this.handleUpdate(update);
           this.offset = update.update_id + 1;
         }
       } catch (err) {
-        console.error('[Telegram] 轮询错误:', err.message);
+        failCount++;
+        console.warn(`[Telegram] 轮询错误 (${failCount}/${maxFails}): ${err.message}`);
+        if (failCount >= maxFails) {
+          console.warn('[Telegram] 连续失败过多，标记离线，等待守护重连');
+          this.connected = false;
+          this._lastError = `连接中断: ${err.message}`;
+          return;
+        }
         await new Promise(resolve => setTimeout(resolve, this.retryDelay));
         this.retryDelay = Math.min(this.retryDelay * 2, this.maxRetryDelay);
       }

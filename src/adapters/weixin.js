@@ -35,18 +35,19 @@ export class WeixinAdapter extends BaseAdapter {
     console.log('[Weixin] 启动个人微信适配器...');
     if (!this.token) throw new Error('未配置 iLink Bot Token（通过 /setup 扫码获取）');
 
-    // 验证 token
+    // 验证 token（失败不阻断启动，让轮询自行处理）
     try {
       await this._verifyToken();
       console.log('[Weixin] ✅ Token 验证通过');
+      this.connected = true;
     } catch (err) {
-      console.error('[Weixin] ❌ Token 验证失败:', err.message);
-      throw new Error('iLink Bot Token 无效，请重新扫码获取');
+      console.warn('[Weixin] ⚠️ Token 验证失败，将继续尝试连接:', err.message);
+      this.connected = false;
+      this._lastError = `Token 验证失败: ${err.message}`;
     }
 
-    this.connected = true;
     this._startPolling();
-    console.log('[Weixin] ✅ 个人微信适配器已启动');
+    console.log('[Weixin] ✅ 个人微信适配器已启动（轮询模式）');
   }
 
   // ========== 扫码登录 ==========
@@ -141,6 +142,8 @@ export class WeixinAdapter extends BaseAdapter {
     this.polling = true;
     let backoff = 1000;
     const maxBackoff = 30000;
+    let failCount = 0;
+    const maxFails = 5; // 连续失败 5 次标记离线
 
     while (this.polling) {
       try {
@@ -149,16 +152,37 @@ export class WeixinAdapter extends BaseAdapter {
           base_info: { channel_version: 'im-bridge-weixin/1.0' },
         }, 40000);
 
-        backoff = 1000;
-
-        if (resp.errcode === -14) {
-          console.warn('[Weixin] 会话过期，暂停 1 小时');
-          await this._sleep(3600000);
+        // ret 不存在可能是长轮询正常超时，不算失败
+        if (resp.ret === undefined && !resp.msgs) {
+          // 长轮询超时，正常情况，重置计数
+          failCount = 0;
+          this.connected = true;
           continue;
         }
 
-        if (resp.ret !== 0) {
-          console.warn(`[Weixin] getUpdates ret=${resp.ret} errmsg=${resp.errmsg}`);
+        // ret 存在但不为 0，才是真正的错误
+        if (resp.ret !== undefined && resp.ret !== 0) {
+          failCount++;
+          console.warn(`[Weixin] getUpdates 错误 (${failCount}/${maxFails}): ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg}`);
+          if (failCount >= maxFails) {
+            this.connected = false;
+            this._lastError = `getUpdates 错误: ret=${resp.ret} ${resp.errmsg || ''}`;
+            return;
+          }
+          await this._sleep(backoff);
+          backoff = Math.min(backoff * 2, maxBackoff);
+          continue;
+        }
+
+        backoff = 1000;
+        failCount = 0;
+        this.connected = true;
+
+        if (resp.errcode === -14) {
+          console.warn('[Weixin] 会话过期，标记离线');
+          this.connected = false;
+          this._lastError = '会话过期，请重新扫码';
+          return;
         }
 
         const msgs = resp.msgs || [];
@@ -173,7 +197,16 @@ export class WeixinAdapter extends BaseAdapter {
         }
       } catch (err) {
         if (!this.polling) return;
-        console.warn(`[Weixin] getUpdates 错误: ${err.message}, 退避 ${backoff}ms`);
+        failCount++;
+        console.warn(`[Weixin] getUpdates 错误 (${failCount}/${maxFails}): ${err.message}, 退避 ${backoff}ms`);
+
+        if (failCount >= maxFails) {
+          console.warn('[Weixin] 连续失败过多，标记离线，等待守护重连');
+          this.connected = false;
+          this._lastError = `连接中断: ${err.message}`;
+          return;
+        }
+
         await this._sleep(backoff);
         backoff = Math.min(backoff * 2, maxBackoff);
       }

@@ -34,9 +34,9 @@ export class AdapterManager {
     console.log(`[AdapterManager] 注册适配器: ${name}`);
   }
 
-  registerWeChat(config) {
+  registerWecom(config) {
     if (!config.corpId || !config.corpSecret) return;
-    this.register('wechat', new WeChatAdapter(config));
+    this.register('wecom', new WeChatAdapter(config));
   }
 
   registerWeixin(config) {
@@ -122,10 +122,59 @@ export class AdapterManager {
         results.push({ name, success: true });
       } catch (err) {
         console.error(`[AdapterManager] 启动 ${name} 失败:`, err.message);
+        adapter._lastError = err.message;
+        adapter._reconnecting = false;
         results.push({ name, success: false, error: err.message });
       }
     }
+    // 启动连接守护
+    this._startGuardian();
     return results;
+  }
+
+  /**
+   * 连接守护 — 每 60 秒检测一次，自动重连离线适配器
+   */
+  _startGuardian() {
+    if (this._guardianInterval) clearInterval(this._guardianInterval);
+    this._guardianInterval = setInterval(async () => {
+      for (const [name, adapter] of this.adapters) {
+        if (adapter.connected || adapter._reconnecting) continue;
+        // 配置了但未连接，尝试重连
+        console.log(`[AdapterManager] 🔄 检测到 ${name} 离线，尝试重连...`);
+        adapter._reconnecting = true;
+        try {
+          await adapter.stop().catch(() => {});
+          await adapter.start();
+          console.log(`[AdapterManager] ✅ ${name} 重连成功`);
+          adapter._lastError = null;
+        } catch (err) {
+          console.warn(`[AdapterManager] ⚠️ ${name} 重连失败: ${err.message}`);
+          adapter._lastError = err.message;
+        }
+        adapter._reconnecting = false;
+      }
+    }, 60000);
+  }
+
+  /**
+   * 手动重连指定适配器
+   */
+  async reconnect(name) {
+    const adapter = this.adapters.get(name);
+    if (!adapter) throw new Error(`适配器 ${name} 不存在`);
+    adapter._reconnecting = true;
+    try {
+      await adapter.stop().catch(() => {});
+      await adapter.start();
+      adapter._lastError = null;
+      adapter._reconnecting = false;
+      return { success: true };
+    } catch (err) {
+      adapter._lastError = err.message;
+      adapter._reconnecting = false;
+      throw err;
+    }
   }
 
   async stopAll() {
@@ -136,8 +185,11 @@ export class AdapterManager {
 
   getStatus() {
     const status = [];
-    for (const [, adapter] of this.adapters) {
-      status.push(adapter.getStatus());
+    for (const [name, adapter] of this.adapters) {
+      const s = adapter.getStatus();
+      s.reconnecting = adapter._reconnecting || false;
+      s.lastError = adapter._lastError || null;
+      status.push(s);
     }
     return status;
   }

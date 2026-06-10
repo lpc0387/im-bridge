@@ -50,6 +50,7 @@ export class SlackAdapter extends BaseAdapter {
       console.log('[Slack] ✅ Slack 适配器已启动 (Socket Mode)');
     } catch (err) {
       console.error('[Slack] 启动失败:', err.message);
+      this._lastError = err.message;
       throw err;
     }
   }

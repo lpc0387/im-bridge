@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 | 平台 | 连接方式 | 需要公网 IP |
 |------|----------|:----------:|
 | 💼 企业微信 | Webhook 回调 | ✅ |
-| 📱 个人微信 | wechaty 框架 | ❌ |
+| 📱 个人微信 | iLink Bot API（官方，安全不封号） | ❌ |
 | 🐦 飞书 | WebSocket | ❌ |
 | 📌 钉钉 | Stream | ❌ |
 | ✈️ Telegram | Long Polling | ❌ |
@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 - Claude API 直接调用（带工具、MCP、Skill，最多 12 轮工具调用）
 - Claude Code CLI 透传（`@@密码 命令`，完整 Git/Agent 能力，无轮数限制）
 - 14+ MCP 搜索工具内置（百度、Bing、GitHub、CSDN、掘金、知乎）
-- Skill 扩展系统（动态创建和调用）
+- Skill 扩展系统（动态创建、调用、导入适配多格式）
 
 **会话管理**
 - 多会话切换（`/switch` 编号选择，`/new` 新建）
@@ -51,12 +51,20 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 - 消息守卫：任务执行中自动拦截重复输入，提供「等待/新会话」选项
 - 状态实时反馈（工具执行进度、CLI 命令追踪）
 
-**管理面板**
-- Web 管理界面（端口 81）
-- 适配器配置向导（13 平台，带参数注释和获取路径）
-- MCP 工具管理
-- 定时任务调度
-- 对话测试
+**适配器守护**
+- 长连接适配器自动检测离线（连续失败 5 次标记离线）
+- 每 60 秒自动重连离线适配器
+- Web 面板显示连接状态 + 手动重连按钮
+
+**Web 管理面板**（端口 81）
+- 概览：系统状态、适配器、Agent、MCP 工具一览
+- 适配器：连接状态、错误信息、一键重连
+- MCP：工具列表、添加/删除
+- Skill：列表、新建、编辑、删除、导入（支持 Claude Code/Codex/Gemini/Cursor/Windsurf 格式自动适配）
+- 会话：按用户查询、查看对话详情、删除会话
+- 配置向导：13 平台傻瓜式配置（带参数注释、获取路径、扫码登录）
+- 对话测试：在线测试对话效果
+- 移动端响应式布局
 
 ## 命令
 
@@ -109,7 +117,7 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 
 ```
 src/
-├── adapters/           # 13 个 IM 适配器
+├── adapters/           # 13 个 IM 适配器（含守护重连）
 ├── agents/             # AI Agent
 ├── cron/               # 定时任务
 ├── web/                # Web 管理界面
@@ -119,6 +127,8 @@ src/
 ├── message-guard.js    # 消息守卫（并发控制）
 ├── mcp-client.js       # MCP 客户端
 └── index.js            # 主入口
+scripts/
+└── setup.js            # CLI 配置脚本
 ```
 
 ## 配置方式

@@ -23,10 +23,22 @@ export class SignalAdapter extends BaseAdapter {
   }
 
   _startPolling() {
+    let failCount = 0;
     this.pollInterval = setInterval(async () => {
       try {
         const resp = await fetch(`${this.apiUrl}/v1/receive/${this.number}?timeout=5`);
-        if (!resp.ok) return;
+        if (!resp.ok) {
+          failCount++;
+          if (failCount >= 5) {
+            console.warn('[Signal] 连续失败过多，标记离线');
+            this.connected = false;
+            this._lastError = `HTTP ${resp.status}`;
+            clearInterval(this.pollInterval);
+          }
+          return;
+        }
+        failCount = 0;
+        this.connected = true;
         const messages = await resp.json();
         for (const msg of messages) {
           if (!msg.envelope?.dataMessage?.message) continue;

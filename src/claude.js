@@ -15,8 +15,38 @@ const SKILLS_DIR = path.join(HOME_DIR, '.claude', 'skills');
 
 // ========== 系统提示词 ==========
 
-const SYSTEM_PROMPT = `你是一个运行在用户服务器上的智能助手，通过IM工具与用户对话。
-你有能力访问服务器上的文件、执行命令、管理MCP工具和Skill。
+const SYSTEM_PROMPT = `你是 IM Bridge 智能助手，通过企业微信/飞书/钉钉等 IM 平台与用户对话。
+
+当用户问"有什么功能"或"有什么命令"时，必须完整列出以下内容：
+
+## 功能
+
+1. 文件操作 — 读取服务器文件、查看目录
+2. 网络搜索 — 14+ MCP 搜索工具（百度、Bing、GitHub、CSDN、掘金、知乎）
+3. Skill 扩展 — 动态创建和调用能力扩展
+4. CLI 透传 — @@密码 命令，调用服务器 Claude Code CLI（Git、代码重构等）
+5. 会话管理 — 多会话切换、历史持久化、Token 统计
+6. 消息守卫 — 任务执行中自动拦截，提供等待/新会话选项
+7. 配置管理 — /setup 对话式配置适配器，Web 管理面板
+
+## 命令
+
+会话管理：
+- /switch — 列出会话，输入编号切换
+- /new — 新建会话
+- /clear — 清空当前会话
+- /cost — 查看 Token 消耗
+- /turns — 查看对话轮数
+
+系统：
+- /setup — 配置适配器（对话式向导）
+- /agents — Agent 列表
+- /adapters — 适配器状态
+- /help — 帮助
+
+CLI：
+- @@密码 命令 — 调用服务器 Claude Code CLI
+
 请用简洁友好的中文回复。如果消息很长，适当分段。支持 Markdown 格式。
 
 当前日期：${new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
@@ -354,8 +384,43 @@ function getToolDisplayName(name) {
 
 // ========== 对话 ==========
 
+// 功能说明（当用户问功能/命令时注入上下文）
+const FEATURE_CONTEXT = `参考以下 IM Bridge 功能列表回答用户：
+
+功能：
+1. 文件操作 — 读取服务器文件、查看目录
+2. 网络搜索 — 14+ MCP 搜索工具（百度、Bing、GitHub、CSDN、掘金、知乎）
+3. Skill 扩展 — 动态创建和调用能力扩展
+4. CLI 透传 — @@密码 命令，调用服务器 Claude Code CLI（Git、代码重构等）
+5. 会话管理 — 多会话切换（/switch）、新建（/new）、清空（/clear）、Token统计（/cost）、轮数（/turns）
+6. 消息守卫 — 任务执行中自动拦截重复输入，提供等待/新会话选项
+7. 配置管理 — /setup 对话式配置适配器，Web 管理面板（端口81）
+
+命令：
+/switch — 列出会话，输入编号切换
+/new — 新建会话
+/clear — 清空当前会话
+/cost — 查看 Token 消耗
+/turns — 查看对话轮数
+/setup — 配置适配器
+/agents — Agent 列表
+/adapters — 适配器状态
+/help — 帮助
+@@密码 命令 — 调用服务器 CLI`;
+
 export async function chat(userId, message, onStatus) {
-  const session = await sessionManager.addMessage(userId, 'user', message);
+  const session = await sessionManager.getActive(userId);
+
+  // 检测是否问功能/命令相关问题，注入上下文（始终注入，不限历史长度）
+  const isFeatureQuestion = /功能|命令|能力|能做|能干|可以做|可以干|help|command/i.test(message);
+  let enhancedMessage = message;
+  if (isFeatureQuestion) {
+    enhancedMessage = `${message}\n\n[系统参考信息：${FEATURE_CONTEXT}]`;
+  }
+
+  // 直接 push 到 session，不重新获取
+  session.messages.push({ role: 'user', content: enhancedMessage, timestamp: new Date().toISOString() });
+  await sessionManager.save(userId, session);
   const history = session.messages;
 
   const mcpTools = mcpManager.getAllTools();

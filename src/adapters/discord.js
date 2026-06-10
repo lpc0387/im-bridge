@@ -46,11 +46,22 @@ export class DiscordAdapter extends BaseAdapter {
         }
       });
 
+      this.client.on('disconnect', () => {
+        console.warn('[Discord] 连接断开');
+        this.connected = false;
+        this._lastError = 'WebSocket 断开';
+      });
+      this.client.on('error', (err) => {
+        console.error('[Discord] 错误:', err.message);
+        this.connected = false;
+        this._lastError = err.message;
+      });
       await this.client.login(this.token);
       this.connected = true;
       console.log('[Discord] ✅ Discord 适配器已启动');
     } catch (err) {
       console.error('[Discord] 启动失败:', err.message);
+      this._lastError = err.message;
       throw err;
     }
   }

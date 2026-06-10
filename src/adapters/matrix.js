@@ -25,6 +25,7 @@ export class MatrixAdapter extends BaseAdapter {
 
   _startSync() {
     this.polling = true;
+    let failCount = 0;
     const poll = async () => {
       if (!this.polling) return;
       try {
@@ -33,7 +34,19 @@ export class MatrixAdapter extends BaseAdapter {
         const resp = await fetch(`${this.homeserver}/_matrix/client/v3/sync?${params}`, {
           headers: { 'Authorization': `Bearer ${this.accessToken}` },
         });
-        if (!resp.ok) return;
+        if (!resp.ok) {
+          failCount++;
+          if (failCount >= 5) {
+            console.warn('[Matrix] 连续失败过多，标记离线');
+            this.connected = false;
+            this._lastError = `HTTP ${resp.status}`;
+            return;
+          }
+          poll();
+          return;
+        }
+        failCount = 0;
+        this.connected = true;
         const data = await resp.json();
         this.syncToken = data.next_batch;
 

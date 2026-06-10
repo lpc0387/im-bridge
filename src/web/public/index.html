@@ -139,6 +139,7 @@
       <button class="tab" onclick="switchTab('cron')">定时</button>
       <button class="tab" onclick="switchTab('chat')">对话</button>
       <button class="tab" onclick="switchTab('skills')">Skill</button>
+      <button class="tab" onclick="switchTab('sessions')">会话</button>
       <button class="tab" onclick="switchTab('setup')">配置</button>
     </div>
 
@@ -276,6 +277,31 @@
       </div>
     </div>
 
+    <!-- 会话管理 -->
+    <div class="panel" id="panel-sessions">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">会话管理</span>
+          <button class="btn btn-primary btn-sm" onclick="loadUserList()">🔄 刷新</button>
+        </div>
+        <div id="user-list">加载中...</div>
+      </div>
+      <div class="card" id="sessions-card" style="display:none">
+        <div class="card-header">
+          <span class="card-title" id="sessions-title">会话列表</span>
+        </div>
+        <div id="sessions-list"></div>
+      </div>
+      <!-- 会话详情 -->
+      <div class="card" id="session-detail-card" style="display:none">
+        <div class="card-header">
+          <span class="card-title" id="session-detail-title">会话详情</span>
+          <button class="btn btn-sm" onclick="document.getElementById('session-detail-card').style.display='none'">关闭</button>
+        </div>
+        <div id="session-detail-content"></div>
+      </div>
+    </div>
+
     <!-- 配置向导 -->
     <div class="panel" id="panel-setup">
       <div class="card">
@@ -342,8 +368,23 @@
         if (data.adapters.length === 0) {
           document.getElementById('adapters-list').innerHTML = '<div class="empty">暂无适配器</div>';
         } else {
-          document.getElementById('adapters-list').innerHTML = '<table><thead><tr><th>名称</th><th>状态</th></tr></thead><tbody>' +
-            data.adapters.map(a => `<tr><td><strong>${a.name}</strong></td><td><span class="badge ${a.connected?'badge-success':'badge-error'}">${a.connected?'在线':'离线'}</span></td></tr>`).join('') +
+          document.getElementById('adapters-list').innerHTML = '<table><thead><tr><th>名称</th><th>状态</th><th>操作</th></tr></thead><tbody>' +
+            data.adapters.map(a => {
+              let statusBadge, statusText;
+              if (a.connected) {
+                statusBadge = 'badge-success';
+                statusText = '在线';
+              } else if (a.reconnecting) {
+                statusBadge = 'badge-warning';
+                statusText = '连接中...';
+              } else {
+                statusBadge = 'badge-error';
+                statusText = '离线';
+              }
+              const errorHint = a.lastError ? `<div style="font-size:11px;color:#dc3545;margin-top:4px;word-break:break-all">${a.lastError.substring(0,80)}</div>` : '';
+              const reconnectBtn = !a.connected && !a.reconnecting ? `<button class="btn btn-sm btn-primary" onclick="reconnectAdapter('${a.name}')">重连</button>` : '';
+              return `<tr><td><strong>${a.name}</strong></td><td><span class="badge ${statusBadge}">${statusText}</span>${errorHint}</td><td>${reconnectBtn}</td></tr>`;
+            }).join('') +
             '</tbody></table>';
         }
 
@@ -546,46 +587,237 @@
     }
     async function pollWeixinStatus(qrKey) {
       const status = document.getElementById('weixin-qr-status');
+      const btn = document.getElementById('weixin-qr-btn');
       let scanned = false;
-      while (weixinQRPolling) {
+      let pollCount = 0;
+      const maxPolls = 160; // 160 * 1.5s = 240s = 4分钟
+
+      while (weixinQRPolling && pollCount < maxPolls) {
+        pollCount++;
         try {
           const resp = await fetch(`/api/weixin/poll?qrcode=${encodeURIComponent(qrKey)}`);
+          if (!resp.ok) {
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
           const data = await resp.json();
-          if (data.status === 'confirmed') {
+
+          if (data.status === 'confirmed' && data.botToken) {
             weixinQRPolling = false;
             status.innerHTML = '<span style="color:#28a745">✅ 扫码成功！Token 已自动填入</span>';
             const tokenInput = document.getElementById('setup-WEIXIN_TOKEN');
             if (tokenInput) tokenInput.value = data.botToken;
+            btn.textContent = '重新扫码';
+            btn.disabled = false;
             return;
           }
-          if (data.status === 'scaned' && !scanned) { scanned = true; status.innerHTML = '<span style="color:#1a73e8">📱 已扫码，请在手机上确认...</span>'; }
-          if (data.status === 'expired') { status.innerHTML = '<span style="color:#e67e22">⏰ 二维码过期，请点击刷新</span>'; weixinQRPolling = false; return; }
-        } catch {}
+          if (data.status === 'scaned' && !scanned) {
+            scanned = true;
+            status.innerHTML = '<span style="color:#1a73e8">📱 已扫码，请在手机上确认登录...</span>';
+          }
+          if (data.status === 'expired') {
+            status.innerHTML = '<span style="color:#e67e22">⏰ 二维码已过期，请点击"刷新二维码"</span>';
+            weixinQRPolling = false;
+            btn.textContent = '刷新二维码';
+            btn.disabled = false;
+            return;
+          }
+        } catch (err) {
+          // 网络错误，继续重试
+          console.warn('QR poll error:', err.message);
+        }
         await new Promise(r => setTimeout(r, 1500));
+      }
+
+      // 超时
+      if (weixinQRPolling) {
+        weixinQRPolling = false;
+        status.innerHTML = '<span style="color:#e67e22">⏰ 轮询超时，请点击"刷新二维码"重试</span>';
+        btn.textContent = '刷新二维码';
+        btn.disabled = false;
       }
     }
 
     async function saveSetup() {
-      const tmpl = platformTemplates[currentSetupPlatform];
-      const inputs = document.querySelectorAll('[id^="setup-"]');
-      const data = {};
-      inputs.forEach(input => { const key = input.id.replace('setup-', ''); if (input.value.trim()) data[key] = input.value.trim(); });
-      if (Object.keys(data).length === 0) {
-        document.getElementById('setup-save-status').innerHTML = '<span style="color:#dc3545">⚠️ 未填写任何配置</span>';
-        return;
-      }
-      document.getElementById('setup-save-status').innerHTML = '<span style="color:#666">保存中...</span>';
       try {
-        const resp = await fetch(`/api/setup/${currentSetupPlatform}`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+        const platform = currentSetupPlatform;
+        if (!platform || !platformTemplates[platform]) {
+          alert('请先选择一个平台');
+          return;
+        }
+
+        const tmpl = platformTemplates[platform];
+        const statusEl = document.getElementById('setup-save-status');
+        statusEl.innerHTML = '<span style="color:#666">保存中...</span>';
+
+        // 只收集配置向导区域内的输入框
+        const formCard = document.getElementById('setup-form-card');
+        const inputs = formCard.querySelectorAll('input[id^="setup-"]');
+        const data = {};
+        inputs.forEach(input => {
+          const key = input.id.replace('setup-', '');
+          const val = input.value.trim();
+          if (val) data[key] = val;
+        });
+
+        if (Object.keys(data).length === 0) {
+          statusEl.innerHTML = '<span style="color:#dc3545">⚠️ 未填写任何配置</span>';
+          return;
+        }
+
+        const resp = await fetch('/api/setup/' + platform, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
         const result = await resp.json();
+
         if (result.success) {
-          document.getElementById('setup-save-status').innerHTML = '<span style="color:#28a745">✅ 已保存，正在重启...</span>';
-          setTimeout(() => { document.getElementById('setup-save-status').innerHTML = '<span style="color:#28a745">✅ 重启完成</span>'; loadSetupList(); loadStatus(); }, 5000);
+          statusEl.innerHTML = '<span style="color:#28a745">✅ 已保存，正在重启（约10秒）...</span>';
+          // 先等 8 秒让服务完全停止并重启
+          await new Promise(r => setTimeout(r, 8000));
+          // 再轮询等待服务恢复
+          let ok = false;
+          for (let i = 0; i < 20; i++) {
+            try {
+              const r = await fetch('/', { signal: AbortSignal.timeout(3000) });
+              if (r.ok) { ok = true; break; }
+            } catch {}
+            statusEl.innerHTML = `<span style="color:#e67e22">⏳ 等待服务恢复... (${i + 1}/20)</span>`;
+            await new Promise(r => setTimeout(r, 1500));
+          }
+          if (ok) {
+            statusEl.innerHTML = '<span style="color:#28a745">✅ 重启完成，3秒后刷新页面</span>';
+            setTimeout(() => location.reload(), 3000);
+          } else {
+            statusEl.innerHTML = '<span style="color:#e67e22">⚠️ 服务恢复超时，请手动刷新页面</span>';
+          }
         } else {
-          document.getElementById('setup-save-status').innerHTML = `<span style="color:#dc3545">❌ ${result.error}</span>`;
+          statusEl.innerHTML = '<span style="color:#dc3545">❌ ' + (result.error || '保存失败') + '</span>';
         }
       } catch (err) {
-        document.getElementById('setup-save-status').innerHTML = `<span style="color:#dc3545">❌ ${err.message}</span>`;
+        var el = document.getElementById('setup-save-status');
+        if (el) el.innerHTML = '<span style="color:#dc3545">❌ ' + err.message + '</span>';
+      }
+    }
+
+    // ========== 会话管理 ==========
+    async function loadUserList() {
+      try {
+        const resp = await fetch('/api/sessions/users');
+        const users = await resp.json();
+        if (users.length === 0) {
+          document.getElementById('user-list').innerHTML = '<div class="empty">暂无用户会话</div>';
+          return;
+        }
+        let html = '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))">';
+        for (const u of users) {
+          const date = u.lastActive ? new Date(u.lastActive).toLocaleString('zh-CN') : '未知';
+          const platform = u.userId.includes(':') ? u.userId.split(':')[0] : 'web';
+          const icon = platform === 'wecom' ? '💼' : platform === 'weixin' ? '📱' : platform === 'feishu' ? '🐦' : platform === 'telegram' ? '✈️' : '💬';
+          html += `<div class="card" style="cursor:pointer" onclick="loadUserSessions('${u.userId}')">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <span style="font-size:20px">${icon}</span>
+              <strong style="font-size:14px">${u.userId}</strong>
+            </div>
+            <div style="font-size:12px;color:#666">
+              会话: ${u.sessions} | 消息: ${u.totalMessages}<br>
+              最后活跃: ${date}
+            </div>
+          </div>`;
+        }
+        html += '</div>';
+        document.getElementById('user-list').innerHTML = html;
+      } catch (err) {
+        document.getElementById('user-list').innerHTML = `<div class="empty">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    async function loadUserSessions(userId) {
+      document.getElementById('sessions-card').style.display = 'block';
+      document.getElementById('sessions-title').textContent = `📋 ${userId} 的会话`;
+      document.getElementById('sessions-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      try {
+        const resp = await fetch(`/api/sessions?userId=${encodeURIComponent(userId)}`);
+        const sessions = await resp.json();
+        if (sessions.length === 0) {
+          document.getElementById('sessions-list').innerHTML = '<div class="empty">暂无会话</div>';
+          return;
+        }
+        let html = '<div class="table-wrap"><table><thead><tr><th>会话</th><th>轮数</th><th>Token</th><th>最后活跃</th><th>操作</th></tr></thead><tbody>';
+        for (const s of sessions) {
+          const date = new Date(s.lastActiveAt).toLocaleString('zh-CN');
+          html += `<tr>
+            <td><strong>${s.name || s.id}</strong></td>
+            <td>${s.messageCount}</td>
+            <td>${s.tokenUsage?.total || 0}</td>
+            <td style="font-size:12px">${date}</td>
+            <td>
+              <button class="btn btn-sm btn-primary" onclick="viewSession('${userId}','${s.id}')">查看</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteSessionUI('${userId}','${s.id}')">删除</button>
+            </td>
+          </tr>`;
+        }
+        html += '</tbody></table></div>';
+        document.getElementById('sessions-list').innerHTML = html;
+      } catch (err) {
+        document.getElementById('sessions-list').innerHTML = `<div class="empty">查询失败: ${err.message}</div>`;
+      }
+    }
+
+    async function viewSession(userId, sessionId) {
+      try {
+        const resp = await fetch(`/api/sessions/${encodeURIComponent(userId)}/${sessionId}`);
+        const session = await resp.json();
+        document.getElementById('session-detail-title').textContent = `会话: ${session.name || session.id}`;
+        const msgs = session.messages || [];
+        let html = `<div style="margin-bottom:12px;font-size:13px;color:#666">
+          Token: 输入${session.tokenUsage?.input||0} 输出${session.tokenUsage?.output||0} 合计${session.tokenUsage?.total||0}
+        </div>`;
+        html += '<div style="max-height:400px;overflow-y:auto">';
+        for (const m of msgs.slice(-30)) {
+          const role = m.role === 'user' ? '👤' : '🤖';
+          let content = '';
+          if (typeof m.content === 'string') content = m.content;
+          else if (Array.isArray(m.content)) {
+            content = m.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+            if (!content) content = m.content.map(c => c.type === 'tool_use' ? `[工具: ${c.name}]` : '').filter(Boolean).join(', ');
+          }
+          if (!content) continue;
+          html += `<div style="padding:6px 0;border-bottom:1px solid #f0f0f0;font-size:13px">
+            <span>${role}</span> <span style="color:#888">${new Date(m.timestamp).toLocaleTimeString('zh-CN')}</span>
+            <div style="margin-top:4px;white-space:pre-wrap;word-break:break-word">${escapeHtml(content.substring(0, 500))}</div>
+          </div>`;
+        }
+        html += '</div>';
+        document.getElementById('session-detail-content').innerHTML = html;
+        document.getElementById('session-detail-card').style.display = 'block';
+      } catch (err) {
+        alert('加载失败: ' + err.message);
+      }
+    }
+
+    async function deleteSessionUI(userId, sessionId) {
+      if (!confirm(`确定删除会话 ${sessionId}？`)) return;
+      try {
+        await fetch(`/api/sessions/${encodeURIComponent(userId)}/${sessionId}`, { method: 'DELETE' });
+        loadUserSessions(userId);
+        loadUserList();
+      } catch (err) { alert('删除失败: ' + err.message); }
+    }
+
+    // ========== 适配器重连 ==========
+    async function reconnectAdapter(name) {
+      try {
+        const resp = await fetch('/api/adapters/' + name + '/reconnect', { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+          loadStatus(); // 刷新状态
+        } else {
+          alert('重连失败: ' + (data.error || '未知错误'));
+        }
+      } catch (err) {
+        alert('重连失败: ' + err.message);
       }
     }
 
@@ -739,6 +971,7 @@
     loadStatus();
     loadSetupList();
     loadSkills();
+    loadUserList();
     setInterval(loadStatus, 10000);
   </script>
 </body>

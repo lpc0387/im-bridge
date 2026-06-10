@@ -17,7 +17,7 @@ const ENV_PATH = path.join(__dirname, '..', '.env');
 // ========== 平台配置模板 ==========
 
 const PLATFORMS = {
-  wechat: {
+  wecom: {
     name: '企业微信',
     icon: '💼',
     vars: [
