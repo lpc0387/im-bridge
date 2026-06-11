@@ -50,6 +50,18 @@ export class FeishuAdapter extends BaseAdapter {
    * 发送消息
    */
   async sendMessage(userId, content, options = {}) {
+    const { msgType = 'text' } = options;
+    if (msgType === 'text') {
+      const chunks = this.splitMessage(content, 30000);
+      for (const chunk of chunks) {
+        await this._sendSingle(userId, chunk, options);
+      }
+    } else {
+      await this._sendSingle(userId, content, options);
+    }
+  }
+
+  async _sendSingle(userId, content, options = {}) {
     const token = await this.getAccessToken();
     const { msgType = 'text', receiveIdType = 'open_id' } = options;
 
@@ -61,7 +73,6 @@ export class FeishuAdapter extends BaseAdapter {
         content: JSON.stringify({ text: content }),
       };
     } else if (msgType === 'interactive') {
-      // 卡片消息
       body = {
         receive_id: userId,
         msg_type: 'interactive',
@@ -97,6 +108,18 @@ export class FeishuAdapter extends BaseAdapter {
    * 回复消息
    */
   async replyMessage(messageId, content, options = {}) {
+    const { msgType = 'text' } = options;
+    if (msgType === 'text') {
+      const chunks = this.splitMessage(content, 30000);
+      for (const chunk of chunks) {
+        await this._replySingle(messageId, chunk, options);
+      }
+    } else {
+      await this._replySingle(messageId, content, options);
+    }
+  }
+
+  async _replySingle(messageId, content, options = {}) {
     const token = await this.getAccessToken();
     const { msgType = 'text' } = options;
 

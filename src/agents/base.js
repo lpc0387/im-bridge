@@ -111,6 +111,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       if (this.config.baseUrl) env.ANTHROPIC_BASE_URL = this.config.baseUrl;
       if (this.config.model) env.ANTHROPIC_MODEL = this.config.model;
 
+      const stallTimeout = 3 * 60 * 1000; // 3 分钟无输出视为卡死
       console.log(`[ClaudeCode] 执行: claude -p "${prompt.substring(0, 60)}..."`);
 
       this.process = spawn('claude', args, {
@@ -122,10 +123,25 @@ export class ClaudeCodeAgent extends BaseAgent {
       let finalText = '';
       const bashCommands = [];
       let isTruncated = false;
+      let lastOutputTime = Date.now();
+      let killed = false;
+
+      // 静默超时检测
+      const stallTimer = setInterval(() => {
+        if (killed) return;
+        const silentMs = Date.now() - lastOutputTime;
+        if (silentMs > stallTimeout) {
+          killed = true;
+          clearInterval(stallTimer);
+          console.warn(`[ClaudeCode] 静默超时 (${Math.round(silentMs/1000)}s)，自动 kill`);
+          this.process.kill('SIGTERM');
+        }
+      }, 30000);
 
       this.process.stdout.on('data', (data) => {
+        lastOutputTime = Date.now();
         const lines = data.toString().split('\n').filter(l => l.trim());
-        
+
         for (const line of lines) {
           try {
             const msg = JSON.parse(line);
@@ -167,15 +183,18 @@ export class ClaudeCodeAgent extends BaseAgent {
         console.log(`[ClaudeCode:stderr] ${data.toString().trim()}`);
       });
 
-      const timeout = options.timeout || 300000;
-      const timer = setTimeout(() => {
-        this.process.kill();
-        reject(new Error('执行超时'));
-      }, timeout);
-
       this.process.on('close', (code) => {
-        clearTimeout(timer);
+        clearInterval(stallTimer);
         this.busy = false;
+
+        if (killed) {
+          const result = finalText
+            ? `⚠️ 任务因 3 分钟无输出被自动终止。\n\n部分结果:\n${finalText}\n\n💡 如需继续，请重新发送消息。`
+            : '⚠️ 任务因 3 分钟无输出被自动终止。如需继续，请重新发送消息。';
+          this.emit('complete', { result, stalled: true });
+          resolve(result);
+          return;
+        }
 
         if (code !== 0 && !finalText) {
           this.emit('error', { error: `退出码 ${code}` });
@@ -183,7 +202,6 @@ export class ClaudeCodeAgent extends BaseAgent {
           return;
         }
 
-        // 检测是否因为 token 限制被截断
         if (isTruncated) {
           finalText += '\n\n⚠️ 任务因输出 Token 限制被截断，可能未完成。如需完整执行，请简化任务或分步执行。';
         }
@@ -193,7 +211,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       });
 
       this.process.on('error', (err) => {
-        clearTimeout(timer);
+        clearInterval(stallTimer);
         this.busy = false;
         this.emit('error', { error: err.message });
         reject(err);
@@ -230,6 +248,7 @@ export class CodexAgent extends BaseAgent {
 
       if (this.config.apiKey) env.OPENAI_API_KEY = this.config.apiKey;
 
+      const stallTimeout = 3 * 60 * 1000;
       console.log(`[Codex] 执行: codex "${prompt.substring(0, 60)}..."`);
 
       this.process = spawn('codex', args, {
@@ -239,8 +258,22 @@ export class CodexAgent extends BaseAgent {
       });
 
       let output = '';
+      let lastOutputTime = Date.now();
+      let killed = false;
+
+      const stallTimer = setInterval(() => {
+        if (killed) return;
+        const silentMs = Date.now() - lastOutputTime;
+        if (silentMs > stallTimeout) {
+          killed = true;
+          clearInterval(stallTimer);
+          console.warn(`[Codex] 静默超时，自动 kill`);
+          this.process.kill('SIGTERM');
+        }
+      }, 30000);
 
       this.process.stdout.on('data', (data) => {
+        lastOutputTime = Date.now();
         output += data.toString();
         this.emit('progress', { status: data.toString().substring(0, 100) });
       });
@@ -249,15 +282,18 @@ export class CodexAgent extends BaseAgent {
         console.log(`[Codex:stderr] ${data.toString().trim()}`);
       });
 
-      const timeout = options.timeout || 300000;
-      const timer = setTimeout(() => {
-        this.process.kill();
-        reject(new Error('执行超时'));
-      }, timeout);
-
       this.process.on('close', (code) => {
-        clearTimeout(timer);
+        clearInterval(stallTimer);
         this.busy = false;
+
+        if (killed) {
+          const result = output
+            ? `⚠️ 任务因 3 分钟无输出被自动终止。\n\n部分结果:\n${output}`
+            : '⚠️ 任务因 3 分钟无输出被自动终止。';
+          this.emit('complete', { result, stalled: true });
+          resolve(result);
+          return;
+        }
 
         if (code !== 0) {
           this.emit('error', { error: `退出码 ${code}` });
@@ -270,7 +306,7 @@ export class CodexAgent extends BaseAgent {
       });
 
       this.process.on('error', (err) => {
-        clearTimeout(timer);
+        clearInterval(stallTimer);
         this.busy = false;
         this.emit('error', { error: err.message });
         reject(err);
@@ -307,6 +343,7 @@ export class GeminiAgent extends BaseAgent {
 
       if (this.config.apiKey) env.GEMINI_API_KEY = this.config.apiKey;
 
+      const stallTimeout = 3 * 60 * 1000;
       console.log(`[Gemini] 执行: gemini "${prompt.substring(0, 60)}..."`);
 
       this.process = spawn('gemini', args, {
@@ -316,8 +353,22 @@ export class GeminiAgent extends BaseAgent {
       });
 
       let output = '';
+      let lastOutputTime = Date.now();
+      let killed = false;
+
+      const stallTimer = setInterval(() => {
+        if (killed) return;
+        const silentMs = Date.now() - lastOutputTime;
+        if (silentMs > stallTimeout) {
+          killed = true;
+          clearInterval(stallTimer);
+          console.warn(`[Gemini] 静默超时，自动 kill`);
+          this.process.kill('SIGTERM');
+        }
+      }, 30000);
 
       this.process.stdout.on('data', (data) => {
+        lastOutputTime = Date.now();
         output += data.toString();
         this.emit('progress', { status: data.toString().substring(0, 100) });
       });
@@ -326,15 +377,18 @@ export class GeminiAgent extends BaseAgent {
         console.log(`[Gemini:stderr] ${data.toString().trim()}`);
       });
 
-      const timeout = options.timeout || 300000;
-      const timer = setTimeout(() => {
-        this.process.kill();
-        reject(new Error('执行超时'));
-      }, timeout);
-
       this.process.on('close', (code) => {
-        clearTimeout(timer);
+        clearInterval(stallTimer);
         this.busy = false;
+
+        if (killed) {
+          const result = output
+            ? `⚠️ 任务因 3 分钟无输出被自动终止。\n\n部分结果:\n${output}`
+            : '⚠️ 任务因 3 分钟无输出被自动终止。';
+          this.emit('complete', { result, stalled: true });
+          resolve(result);
+          return;
+        }
 
         if (code !== 0) {
           this.emit('error', { error: `退出码 ${code}` });
@@ -347,7 +401,7 @@ export class GeminiAgent extends BaseAgent {
       });
 
       this.process.on('error', (err) => {
-        clearTimeout(timer);
+        clearInterval(stallTimer);
         this.busy = false;
         this.emit('error', { error: err.message });
         reject(err);

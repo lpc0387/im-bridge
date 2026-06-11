@@ -135,22 +135,6 @@ export class WeChatAdapter extends BaseAdapter {
   }
 
   /**
-   * 分割消息
-   */
-  splitMessage(text, maxLen) {
-    const chunks = [];
-    let remaining = text;
-    while (remaining.length > maxLen) {
-      let splitIdx = remaining.lastIndexOf('\n', maxLen);
-      if (splitIdx < maxLen * 0.5) splitIdx = maxLen;
-      chunks.push(remaining.substring(0, splitIdx));
-      remaining = remaining.substring(splitIdx);
-    }
-    if (remaining) chunks.push(remaining);
-    return chunks;
-  }
-
-  /**
    * 处理回调消息
    */
   handleMessage(xml) {

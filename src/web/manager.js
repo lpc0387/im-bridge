@@ -458,6 +458,9 @@ export class WebUI {
    */
   _getPlatformTemplates() {
     return {
+      cli: { name: 'CLI 透传', icon: '🖥️', postInstall: null, guide: '', vars: [
+        { key: 'CLI_ACCESS_PASSWORD', label: 'CLI 密码', hint: '用于 @@密码 命令的访问密码，设置后可通过 IM 远程调用 Claude Code CLI', placeholder: '设置一个安全密码' },
+      ]},
       wecom: { name: '企业微信', icon: '💼', postInstall: null, guide: 'https://work.weixin.qq.com/wework_admin/frame', vars: [
         { key: 'WECOM_CORPID', label: 'CorpID', hint: '企微后台 → 我的企业 → 企业信息最下方', placeholder: 'ww4a417a7419e691c5' },
         { key: 'WECOM_CORPSECRET', label: 'CorpSecret', hint: '企微后台 → 应用管理 → 自建应用 → Secret', placeholder: '' },

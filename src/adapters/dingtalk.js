@@ -161,12 +161,18 @@ export class DingTalkAdapter extends BaseAdapter {
    * 发送消息
    */
   async sendMessage(userId, content, options = {}) {
+    const chunks = this.splitMessage(content, 20000);
+    for (const chunk of chunks) {
+      await this._sendSingle(userId, chunk, options);
+    }
+  }
+
+  async _sendSingle(userId, content, options = {}) {
     const token = await this.getAccessToken();
-    const { msgType = 'text', conversationId, conversationType = '1' } = options;
+    const { conversationId, conversationType = '1' } = options;
 
     let body;
     if (conversationType === '1') {
-      // 单聊
       body = {
         robotCode: this.robotCode,
         userIds: [userId],
@@ -174,7 +180,6 @@ export class DingTalkAdapter extends BaseAdapter {
         msgParam: JSON.stringify({ content }),
       };
     } else {
-      // 群聊
       body = {
         robotCode: this.robotCode,
         openConversationId: conversationId,

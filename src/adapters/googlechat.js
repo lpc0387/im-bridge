@@ -57,7 +57,7 @@ export class GoogleChatAdapter extends BaseAdapter {
   }
 
   async _send(spaceName, text) {
-    // 使用 service account 认证发送消息
+    const chunks = this.splitMessage(text, 4000);
     try {
       const { google } = await import('googleapis');
       const auth = new google.auth.GoogleAuth({
@@ -65,10 +65,12 @@ export class GoogleChatAdapter extends BaseAdapter {
         scopes: ['https://www.googleapis.com/auth/chat.bot'],
       });
       const chat = google.chat({ version: 'v1', auth });
-      await chat.spaces.messages.create({
-        parent: spaceName,
-        requestBody: { text },
-      });
+      for (const chunk of chunks) {
+        await chat.spaces.messages.create({
+          parent: spaceName,
+          requestBody: { text: chunk },
+        });
+      }
     } catch (err) {
       console.error('[GoogleChat] 发送失败:', err.message);
     }

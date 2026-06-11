@@ -65,19 +65,23 @@ export class WhatsAppAdapter extends BaseAdapter {
   }
 
   async _send(to, text, replyTo) {
-    const body = {
-      messaging_product: 'whatsapp',
-      to,
-      type: 'text',
-      text: { body: text.substring(0, 4096) },
-    };
-    if (replyTo) body.context = { message_id: replyTo };
+    const chunks = this.splitMessage(text, 4096);
+    for (let i = 0; i < chunks.length; i++) {
+      const body = {
+        messaging_product: 'whatsapp',
+        to,
+        type: 'text',
+        text: { body: chunks[i] },
+      };
+      // 只在第一条消息引用回复
+      if (replyTo && i === 0) body.context = { message_id: replyTo };
 
-    await fetch(`https://graph.facebook.com/v18.0/${this.phoneNumberId}/messages`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+      await fetch(`https://graph.facebook.com/v18.0/${this.phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
   }
 
   async sendMessage(userId, content) {

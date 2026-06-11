@@ -81,11 +81,14 @@ export class MatrixAdapter extends BaseAdapter {
   }
 
   async _send(roomId, text) {
-    await fetch(`${this.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message`, {
-      method: 'PUT',
-      headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ msgtype: 'm.text', body: text }),
-    });
+    const chunks = this.splitMessage(text, 60000);
+    for (const chunk of chunks) {
+      await fetch(`${this.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${this.accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ msgtype: 'm.text', body: chunk }),
+      });
+    }
   }
 
   async sendMessage(userId, content) {

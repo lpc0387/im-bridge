@@ -5,7 +5,7 @@ import { config } from './config.js';
 import { chat, clearHistory, getTurnCount } from './claude.js';
 import { mcpManager } from './mcp-client.js';
 import { sessionManager } from './session.js';
-import { handleCliPassthrough } from './cli-passthrough.js';
+import { handleCliPassthrough, clearCliSessionId } from './cli-passthrough.js';
 import { checkMessageGuard, markBusy, markIdle, getPendingMessage, clearChoice } from './message-guard.js';
 import { AdapterManager } from './adapters/manager.js';
 import { AgentManager } from './agents/manager.js';
@@ -25,6 +25,9 @@ const webUI = new WebUI({ port: config.port + 1 });
 // ========== 配置向导流程 ==========
 
 const PLATFORMS = {
+  cli: { name: 'CLI 透传', icon: '🖥️', vars: [
+    { key: 'CLI_ACCESS_PASSWORD', label: 'CLI 密码', hint: '用于 @@密码 命令的访问密码' },
+  ]},
   wecom: { name: '企业微信', icon: '💼', vars: [
     { key: 'WECOM_CORPID', label: 'CorpID' },
     { key: 'WECOM_CORPSECRET', label: 'CorpSecret' },
@@ -277,6 +280,7 @@ app.post('/chat', async (req, res) => {
     if (message.startsWith('/')) {
       const cmd = message.trim();
       if (cmd === '/clear') { await clearHistory(userId); return res.json({ reply: '✅ 会话已清空' }); }
+      if (cmd === '/cli-clear') { clearCliSessionId(userId); return res.json({ reply: '✅ CLI会话已清空，下次@@命令将创建新会话' }); }
       if (cmd === '/turns') { return res.json({ reply: `📊 轮数: ${await getTurnCount(userId)}` }); }
       if (cmd === '/new') { const ts = Date.now().toString(36); await sessionManager.switchTo(userId, ts); return res.json({ reply: `✅ 新会话: ${ts}` }); }
       if (cmd === '/switch' || cmd === '/sessions') {
@@ -302,7 +306,7 @@ app.post('/chat', async (req, res) => {
     if (message.startsWith('@@')) {
       const reply = await handleCliPassthrough(message, (status) => {
         console.log(`[CLI] ${status}`);
-      });
+      }, userId);  // 传入userId用于会话恢复
       return res.json({ reply });
     }
 
@@ -443,6 +447,11 @@ async function main() {
           await message.send('✅ 会话已清空');
           return;
         }
+        if (cmd === '/cli-clear') {
+          clearCliSessionId(message.userId);
+          await message.send('✅ CLI会话已清空，下次@@命令将创建新会话');
+          return;
+        }
         if (cmd === '/turns') {
           const turns = await getTurnCount(message.userId);
           await message.send(`📊 当前会话轮数: ${turns}`);
@@ -490,7 +499,7 @@ async function main() {
           return;
         }
         if (cmd === '/help') {
-          await message.send(`📋 可用命令:\n\n💬 对话:\n/setup — 配置适配器\n/clear — 清空会话\n/new — 新建会话\n/switch — 切换会话\n/sessions — 会话列表\n/cost — Token 消耗\n/turns — 对话轮数\n\n🔧 系统:\n/agents — Agent 列表\n/adapters — 适配器状态\n/cron — 定时任务\n\n🖥️ CLI:\n@@密码 命令 — 调用服务器 CLI`);
+          await message.send(`📋 可用命令:\n\n💬 对话:\n/setup — 配置适配器\n/clear — 清空会话\n/new — 新建会话\n/switch — 切换会话\n/sessions — 会话列表\n/cost — Token 消耗\n/turns — 对话轮数\n\n🔧 系统:\n/agents — Agent 列表\n/adapters — 适配器状态\n/cron — 定时任务\n\n🖥️ CLI:\n@@密码 [命令] — 调用服务器 CLI（不带命令则接入上次会话）\n/cli-clear — 清除CLI会话，下次创建新会话`);
           return;
         }
       }
@@ -499,15 +508,18 @@ async function main() {
       if (message.content.startsWith('@@')) {
         markBusy(message.userId, 'CLI 命令');
         try {
-          let lastCliStatusTime = 0;
+          // 只发一条"正在处理"，中间状态不发（节省 context_token）
+          await message.sendStatus('正在执行 CLI 任务，请耐心等待...').catch(() => {});
+
           const reply = await handleCliPassthrough(message.content, (status) => {
-            const now = Date.now();
-            if (now - lastCliStatusTime > 5000) {
-              lastCliStatusTime = now;
-              message.sendStatus(status).catch(() => {});
-            }
-          });
+            // 只记日志，不发到 IM（避免消耗 context_token）
+            console.log(`[CLI:status] ${status}`);
+          }, message.userId);
+
+          // 发最终结果（这是关键，必须成功）
           await message.send(reply);
+        } catch (err) {
+          await message.send(`❌ CLI 执行失败: ${err.message}`).catch(() => {});
         } finally {
           markIdle(message.userId);
         }

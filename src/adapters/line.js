@@ -50,19 +50,28 @@ export class LineAdapter extends BaseAdapter {
   }
 
   async _reply(replyToken, text) {
-    await fetch('https://api.line.me/v2/bot/message/reply', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${this.channelAccessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ replyToken, messages: [{ type: 'text', text: text.substring(0, 5000) }] }),
-    });
+    const chunks = this.splitMessage(text, 5000);
+    // LINE reply API 最多支持 5 条消息
+    for (let i = 0; i < chunks.length; i += 5) {
+      const batch = chunks.slice(i, i + 5).map(t => ({ type: 'text', text: t }));
+      await fetch('https://api.line.me/v2/bot/message/reply', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.channelAccessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ replyToken, messages: batch }),
+      });
+    }
   }
 
   async _push(userId, text) {
-    await fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${this.channelAccessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: userId, messages: [{ type: 'text', text: text.substring(0, 5000) }] }),
-    });
+    const chunks = this.splitMessage(text, 5000);
+    for (let i = 0; i < chunks.length; i += 5) {
+      const batch = chunks.slice(i, i + 5).map(t => ({ type: 'text', text: t }));
+      await fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.channelAccessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: userId, messages: batch }),
+      });
+    }
   }
 
   async sendMessage(userId, content) {

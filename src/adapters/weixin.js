@@ -24,9 +24,9 @@ export class WeixinAdapter extends BaseAdapter {
     this.dedup = new Map();
 
     this.maxChunk = 3800;
-    this.chunkDelay = 100;
+    this.chunkDelay = 300;   // 分片间隔 300ms（防止频率限制）
     this.sendRetries = 3;
-    this.retryDelay = 500;
+    this.retryDelay = 1000;  // 重试间隔 1s
   }
 
   // ========== 启动 ==========
@@ -143,27 +143,40 @@ export class WeixinAdapter extends BaseAdapter {
     let backoff = 1000;
     const maxBackoff = 30000;
     let failCount = 0;
-    const maxFails = 5; // 连续失败 5 次标记离线
+    const maxFails = 10; // 连续失败 10 次才标记离线（提高容忍度）
+    const longPollTimeout = 40000;
 
     while (this.polling) {
       try {
         const resp = await this._post('ilink/bot/getupdates', {
           get_updates_buf: this.syncBuf,
           base_info: { channel_version: 'im-bridge-weixin/1.0' },
-        }, 40000);
+        }, longPollTimeout);
 
-        // ret 不存在可能是长轮询正常超时，不算失败
-        if (resp.ret === undefined && !resp.msgs) {
-          // 长轮询超时，正常情况，重置计数
-          failCount = 0;
-          this.connected = true;
-          continue;
+        // 成功响应，重置退避
+        backoff = 1000;
+
+        // 会话过期 — 永久错误，立即标记
+        if (resp.errcode === -14 || resp.ret === -14) {
+          console.warn('[Weixin] 会话过期，标记离线');
+          this.connected = false;
+          this._lastError = '会话过期，请重新扫码';
+          return;
         }
 
         // ret 存在但不为 0，才是真正的错误
         if (resp.ret !== undefined && resp.ret !== 0) {
           failCount++;
           console.warn(`[Weixin] getUpdates 错误 (${failCount}/${maxFails}): ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg}`);
+
+          // 频率限制 / 临时错误 — 长退避但不计入 failCount
+          if (resp.ret === 45009 || resp.errcode === 45009 || resp.ret === -1) {
+            console.warn('[Weixin] 频率限制或临时错误，等待 60s 后重试');
+            failCount = Math.max(0, failCount - 1); // 不累积
+            await this._sleep(60000);
+            continue;
+          }
+
           if (failCount >= maxFails) {
             this.connected = false;
             this._lastError = `getUpdates 错误: ret=${resp.ret} ${resp.errmsg || ''}`;
@@ -174,16 +187,13 @@ export class WeixinAdapter extends BaseAdapter {
           continue;
         }
 
-        backoff = 1000;
+        // 成功响应 — 重置计数
         failCount = 0;
-        this.connected = true;
-
-        if (resp.errcode === -14) {
-          console.warn('[Weixin] 会话过期，标记离线');
-          this.connected = false;
-          this._lastError = '会话过期，请重新扫码';
-          return;
+        if (!this.connected) {
+          console.log('[Weixin] ✅ 连接恢复');
         }
+        this.connected = true;
+        this._lastError = null;
 
         const msgs = resp.msgs || [];
         for (const msg of msgs) {
@@ -197,6 +207,19 @@ export class WeixinAdapter extends BaseAdapter {
         }
       } catch (err) {
         if (!this.polling) return;
+
+        // 长轮询超时（AbortError）是正常行为，不算失败
+        if (err.name === 'AbortError' || err.message?.includes('abort')) {
+          failCount = 0;
+          if (!this.connected) {
+            console.log('[Weixin] ✅ 连接恢复（长轮询超时）');
+          }
+          this.connected = true;
+          this._lastError = null;
+          continue;
+        }
+
+        // 网络错误 — 计入失败但提高容忍度
         failCount++;
         console.warn(`[Weixin] getUpdates 错误 (${failCount}/${maxFails}): ${err.message}, 退避 ${backoff}ms`);
 
@@ -250,23 +273,52 @@ export class WeixinAdapter extends BaseAdapter {
     console.log(`[Weixin] 收到 ${from}: ${text.substring(0, 50)}...`);
 
     if (this.messageHandler) {
+      // 状态累积器：合并多条状态为一条消息，节省 context_token
+      let statusBuffer = [];
+      let statusTimer = null;
+      const flushStatus = async () => {
+        if (statusBuffer.length === 0) return;
+        const merged = statusBuffer.join('\n');
+        statusBuffer = [];
+        statusTimer = null;
+        try {
+          const token = this.contextTokens[from];
+          if (!token) return;
+          await this._sendText(from, `⏳ ${merged}`, token);
+        } catch (err) {
+          console.warn(`[Weixin] 状态发送失败: ${err.message}`);
+        }
+      };
+
       this.messageHandler({
         platform: 'weixin',
         userId: from,
         userName: from,
         content: text.trim(),
         messageId: String(msg.message_id || ''),
-        reply: async (content) => await this._sendChunks(from, content, msg.context_token),
-        send: async (content) => await this._sendChunks(from, content, msg.context_token),
-        sendStatus: async (status) => await this._sendText(from, `⏳ ${status}`, msg.context_token),
+        reply: async (content) => await this._sendChunks(from, content),
+        send: async (content) => await this._sendChunks(from, content),
+        sendStatus: async (status) => {
+          statusBuffer.push(status);
+          // 5 秒内的状态合并为一条消息发送
+          if (!statusTimer) {
+            statusTimer = setTimeout(flushStatus, 5000);
+          }
+          // 如果累积超过 5 条，立即发送
+          if (statusBuffer.length >= 5) {
+            if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+            await flushStatus();
+          }
+        },
       });
     }
   }
 
   // ========== 发送消息 ==========
 
-  async _sendChunks(to, content, contextToken) {
-    if (!contextToken) contextToken = this.contextTokens[to];
+  async _sendChunks(to, content) {
+    // 始终从缓存取最新 token
+    let contextToken = this.contextTokens[to];
     if (!contextToken) {
       console.error(`[Weixin] 缺少 context_token，用户 ${to} 需要先发一条消息`);
       return;
@@ -275,7 +327,18 @@ export class WeixinAdapter extends BaseAdapter {
     const chunks = this._splitText(content, this.maxChunk);
     for (let i = 0; i < chunks.length; i++) {
       if (i > 0) await this._sleep(this.chunkDelay);
-      await this._sendChunkWithRetry(to, chunks[i], contextToken, i + 1, chunks.length);
+      // 每次发送前刷新 token（可能被其他消息更新了）
+      contextToken = this.contextTokens[to] || contextToken;
+      try {
+        await this._sendChunkWithRetry(to, chunks[i], contextToken, i + 1, chunks.length);
+      } catch (err) {
+        if (err.message.includes('ret=-2') || err.message.includes('context_token')) {
+          console.warn(`[Weixin] context_token 过期，停止发送剩余消息`);
+          this._sendText(to, '⚠️ 会话 token 过期，请发一条新消息刷新会话。', this.contextTokens[to]).catch(() => {});
+          return;
+        }
+        throw err;
+      }
     }
   }
 
@@ -286,13 +349,17 @@ export class WeixinAdapter extends BaseAdapter {
         return;
       } catch (err) {
         if (err.message.includes('ret=-2')) {
+          console.warn(`[Weixin] sendMessage ret=-2 (token 过期), attempt=${attempt + 1}`);
+          // 尝试从缓存获取新 token
           const fresh = this.contextTokens[to];
           if (fresh && fresh !== contextToken) {
             contextToken = fresh;
+            console.log(`[Weixin] 使用缓存的新 token 重试`);
             await this._sleep(this.retryDelay);
             continue;
           }
-          throw err;
+          // 没有新 token，抛出让外层处理
+          throw new Error('ret=-2: context_token 过期，需要用户发新消息刷新');
         }
         throw err;
       }

@@ -33,12 +33,11 @@ export class DiscordAdapter extends BaseAdapter {
             content: text,
             messageId: message.id,
             reply: async (content) => {
-              // Discord 限制 2000 字符
-              const chunks = this._split(content, 1900);
+              const chunks = this.splitMessage(content, 1900);
               for (const chunk of chunks) await message.reply(chunk);
             },
             send: async (content) => {
-              const chunks = this._split(content, 1900);
+              const chunks = this.splitMessage(content, 1900);
               for (const chunk of chunks) await message.channel.send(chunk);
             },
             sendStatus: async (status) => await message.channel.send(`⏳ ${status}`),
@@ -69,26 +68,13 @@ export class DiscordAdapter extends BaseAdapter {
   async sendMessage(userId, content) {
     if (!this.client) throw new Error('Discord 未初始化');
     const user = await this.client.users.fetch(userId);
-    const chunks = this._split(content, 1900);
+    const chunks = this.splitMessage(content, 1900);
     for (const chunk of chunks) await user.send(chunk);
   }
 
   async stop() {
     if (this.client) this.client.destroy();
     this.connected = false;
-  }
-
-  _split(text, maxLen) {
-    const chunks = [];
-    let remaining = text;
-    while (remaining.length > maxLen) {
-      let idx = remaining.lastIndexOf('\n', maxLen);
-      if (idx < maxLen * 0.5) idx = maxLen;
-      chunks.push(remaining.substring(0, idx));
-      remaining = remaining.substring(idx);
-    }
-    if (remaining) chunks.push(remaining);
-    return chunks;
   }
 
   _getConfigSummary() {

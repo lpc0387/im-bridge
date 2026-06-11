@@ -67,7 +67,7 @@ export const config = {
   },
   cli: {
     password: process.env.CLI_ACCESS_PASSWORD,
-    timeoutMs: parseInt(process.env.CLI_TIMEOUT_MS || '300000', 10),
+    // timeoutMs 已移除 — CLI 执行不限时
   },
   port: parseInt(process.env.PORT || '3000', 10),
 };

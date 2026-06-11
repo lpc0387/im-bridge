@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.1.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-3.2.1-blue" alt="version">
   <img src="https://img.shields.io/badge/node-%3E%3D18-green" alt="node">
   <img src="https://img.shields.io/badge/license-MIT-yellow" alt="license">
 </p>
@@ -42,6 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 **对话能力**
 - Claude API 直接调用（带工具、MCP、Skill，最多 12 轮工具调用）
 - Claude Code CLI 透传（`@@密码 命令`，完整 Git/Agent 能力，无轮数限制）
+- CLI 会话续传：只发 `@@密码` 自动接入上次会话；`/new` 强制新建；`/clear` 清空
 - 14+ MCP 搜索工具内置（百度、Bing、GitHub、CSDN、掘金、知乎）
 - Skill 扩展系统（动态创建、调用、导入适配多格式）
 
@@ -50,6 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 - 历史持久化，Token 消耗统计
 - 消息守卫：任务执行中自动拦截重复输入，提供「等待/新会话」选项
 - 状态实时反馈（工具执行进度、CLI 命令追踪）
+- CLI 断点续传：卡死自动重试，带上已执行上下文
 
 **适配器守护**
 - 长连接适配器自动检测离线（连续失败 5 次标记离线）
@@ -92,6 +94,10 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 | 命令 | 说明 |
 |------|------|
 | `@@密码 命令` | 调用服务器 Claude Code CLI |
+| `@@密码` | 接入上次 CLI 会话（断点续传） |
+| `@@密码 /new` | 强制开启新的 CLI 会话 |
+| `@@密码 /clear` | 清空当前 CLI 会话 |
+| `/cli-clear` | 清除 CLI 会话（同 `/clear` 但只清 CLI） |
 
 ## 消息守卫
 
@@ -117,12 +123,12 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 
 ```
 src/
-├── adapters/           # 13 个 IM 适配器（含守护重连）
-├── agents/             # AI Agent
+├── adapters/           # 13 个 IM 适配器（含守护重连、长消息分段）
+├── agents/             # AI Agent（含静默超时检测）
 ├── cron/               # 定时任务
 ├── web/                # Web 管理界面
 ├── claude.js           # Claude API + 工具（12 轮上限）
-├── cli-passthrough.js  # CLI 透传（无轮数限制）
+├── cli-passthrough.js  # CLI 透传（无轮数限制、会话续传、断点续传）
 ├── session.js          # 会话管理
 ├── message-guard.js    # 消息守卫（并发控制）
 ├── mcp-client.js       # MCP 客户端

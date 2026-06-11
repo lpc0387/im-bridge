@@ -24,7 +24,7 @@ const SYSTEM_PROMPT = `你是 IM Bridge 智能助手，通过企业微信/飞书
 1. 文件操作 — 读取服务器文件、查看目录
 2. 网络搜索 — 14+ MCP 搜索工具（百度、Bing、GitHub、CSDN、掘金、知乎）
 3. Skill 扩展 — 动态创建和调用能力扩展
-4. CLI 透传 — @@密码 命令，调用服务器 Claude Code CLI（Git、代码重构等）
+4. CLI 透传 — @@密码 [命令]，调用服务器 Claude Code CLI（不带命令接入上次会话；/new 强制新建，/clear 清空会话）
 5. 会话管理 — 多会话切换、历史持久化、Token 统计
 6. 消息守卫 — 任务执行中自动拦截，提供等待/新会话选项
 7. 配置管理 — /setup 对话式配置适配器，Web 管理面板
@@ -45,7 +45,7 @@ const SYSTEM_PROMPT = `你是 IM Bridge 智能助手，通过企业微信/飞书
 - /help — 帮助
 
 CLI：
-- @@密码 命令 — 调用服务器 Claude Code CLI
+- @@密码 [命令] — 调用服务器 Claude Code CLI（不带命令则接入上次会话）
 
 请用简洁友好的中文回复。如果消息很长，适当分段。支持 Markdown 格式。
 
@@ -69,7 +69,9 @@ CLI：
 - /help — 帮助
 
 **CLI 透传：**
-- @@密码 命令 — 调用服务器 Claude Code CLI（完整 Git/Agent 能力）
+- @@密码 [命令] — 调用服务器 Claude Code CLI（不带命令接入上次会话）
+- @@密码 /new — 强制开启新的 CLI 会话
+- @@密码 /clear — 清空当前 CLI 会话
 
 当用户要求执行写入文件、修改代码、Git 操作等超出你权限的操作时，提示：
 "此操作需要写入权限，请使用 CLI 模式：@@密码 命令"
@@ -113,7 +115,7 @@ IM 回复规则（极重要）：
 
 你有两种工作模式：
 1. **API 模式**（当前）：通过 Claude API 直接回复，支持基础工具
-2. **CLI 模式**：用户发送 "@@密码 命令" 可调用服务器上的 Claude Code CLI，获得完整能力（Git、Agent、Plan 等）
+2. **CLI 模式**：用户发送 "@@密码 [命令]" 可调用服务器上的 Claude Code CLI，获得完整能力（Git、Agent、Plan 等）。不带命令则接入上次会话；发送 /new 强制新建会话，/clear 清空会话。
 
 当用户的任务超出你的能力范围时（如需要 Git 操作、复杂代码重构），主动提示：
 "此任务建议在服务器 CLI 中执行，可用 @@密码 命令 触发"`;
@@ -391,7 +393,7 @@ const FEATURE_CONTEXT = `参考以下 IM Bridge 功能列表回答用户：
 1. 文件操作 — 读取服务器文件、查看目录
 2. 网络搜索 — 14+ MCP 搜索工具（百度、Bing、GitHub、CSDN、掘金、知乎）
 3. Skill 扩展 — 动态创建和调用能力扩展
-4. CLI 透传 — @@密码 命令，调用服务器 Claude Code CLI（Git、代码重构等）
+4. CLI 透传 — @@密码 [命令]，调用服务器 Claude Code CLI（不带命令则接入上次会话）
 5. 会话管理 — 多会话切换（/switch）、新建（/new）、清空（/clear）、Token统计（/cost）、轮数（/turns）
 6. 消息守卫 — 任务执行中自动拦截重复输入，提供等待/新会话选项
 7. 配置管理 — /setup 对话式配置适配器，Web 管理面板（端口81）
@@ -406,7 +408,7 @@ const FEATURE_CONTEXT = `参考以下 IM Bridge 功能列表回答用户：
 /agents — Agent 列表
 /adapters — 适配器状态
 /help — 帮助
-@@密码 命令 — 调用服务器 CLI`;
+@@密码 [命令] — 调用服务器 CLI（不带命令则接入上次会话）`;
 
 export async function chat(userId, message, onStatus) {
   const session = await sessionManager.getActive(userId);

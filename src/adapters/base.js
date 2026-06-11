@@ -63,4 +63,23 @@ export class BaseAdapter {
   _getConfigSummary() {
     return {};
   }
+
+  /**
+   * 分割长消息为多段（换行优先分割，避免截断句子）
+   * @param {string} text - 原始文本
+   * @param {number} maxLen - 每段最大长度（字符数）
+   * @returns {string[]} 分段后的文本数组
+   */
+  splitMessage(text, maxLen) {
+    const chunks = [];
+    let remaining = text;
+    while (remaining.length > maxLen) {
+      let splitIdx = remaining.lastIndexOf('\n', maxLen);
+      if (splitIdx < maxLen * 0.5) splitIdx = maxLen;
+      chunks.push(remaining.substring(0, splitIdx));
+      remaining = remaining.substring(splitIdx);
+    }
+    if (remaining) chunks.push(remaining);
+    return chunks;
+  }
 }

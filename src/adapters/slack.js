@@ -38,8 +38,14 @@ export class SlackAdapter extends BaseAdapter {
             userName: message.user,
             content: text,
             messageId: message.ts,
-            reply: async (content) => await say(content),
-            send: async (content) => await say(content),
+            reply: async (content) => {
+              const chunks = this.splitMessage(content, 40000);
+              for (const chunk of chunks) await say(chunk);
+            },
+            send: async (content) => {
+              const chunks = this.splitMessage(content, 40000);
+              for (const chunk of chunks) await say(chunk);
+            },
             sendStatus: async (status) => await say(`⏳ ${status}`),
           });
         }
@@ -57,10 +63,13 @@ export class SlackAdapter extends BaseAdapter {
 
   async sendMessage(userId, content) {
     if (!this.app) throw new Error('Slack 未初始化');
-    await this.app.client.chat.postMessage({
-      channel: userId,
-      text: content,
-    });
+    const chunks = this.splitMessage(content, 40000);
+    for (const chunk of chunks) {
+      await this.app.client.chat.postMessage({
+        channel: userId,
+        text: chunk,
+      });
+    }
   }
 
   async stop() {

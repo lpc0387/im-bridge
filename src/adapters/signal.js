@@ -65,11 +65,14 @@ export class SignalAdapter extends BaseAdapter {
   }
 
   async _send(recipient, text) {
-    await fetch(`${this.apiUrl}/v2/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ number: this.number, recipients: [recipient], message: text }),
-    });
+    const chunks = this.splitMessage(text, 2000);
+    for (const chunk of chunks) {
+      await fetch(`${this.apiUrl}/v2/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ number: this.number, recipients: [recipient], message: chunk }),
+      });
+    }
   }
 
   async sendMessage(userId, content) {
