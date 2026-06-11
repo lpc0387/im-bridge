@@ -9,6 +9,12 @@
   <img src="https://img.shields.io/badge/license-MIT-yellow" alt="license">
 </p>
 
+<p align="center">
+  <a href="README.md">简体中文</a> |
+  <a href="README.en.md">English</a> |
+  <a href="README.ja.md">日本語</a>
+</p>
+
 ---
 
 ## 一键部署
