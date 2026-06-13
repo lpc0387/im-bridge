@@ -471,6 +471,7 @@ export class WebUI {
       weixin: { name: '个人微信', icon: '📱', postInstall: null, guide: 'https://ilinkai.weixin.qq.com', vars: [
         { key: 'WEIXIN_TOKEN', label: 'iLink Bot Token', hint: '微信官方 iLink Bot API Token（安全不封号）', placeholder: '' },
         { key: 'WEIXIN_BASE_URL', label: 'API 地址', hint: '默认 https://ilinkai.weixin.qq.com', placeholder: 'https://ilinkai.weixin.qq.com', default: 'https://ilinkai.weixin.qq.com', optional: true },
+        { key: 'WEIXIN_CDN_BASE_URL', label: 'CDN 地址', hint: '默认 https://novac2c.cdn.weixin.qq.com/c2c', placeholder: 'https://novac2c.cdn.weixin.qq.com/c2c', default: 'https://novac2c.cdn.weixin.qq.com/c2c', optional: true },
         { key: 'WEIXIN_ALLOW_FROM', label: '白名单', hint: '逗号分隔用户 ID，留空允许所有人', placeholder: '留空允许所有人', optional: true },
       ]},
       feishu: { name: '飞书', icon: '🐦', postInstall: null, guide: 'https://open.feishu.cn/', vars: [

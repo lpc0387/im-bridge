@@ -51,6 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 - CLI セッション再開：`@@パスワード` だけで前回のセッションに復帰できます。`/new` で新規作成、`/clear` でクリアできます。
 - Baidu、Bing、GitHub、CSDN、Juejin、Zhihu など 14+ の MCP 検索ツールを内蔵。
 - Skill 拡張システム。動的作成、呼び出し、インポート、複数フォーマットへの自動適応に対応します。
+- 生成ファイル配信：CLI/Skill が作成した `.docx`、PDF、画像などの安全なファイルを、対応プラットフォームでは添付ファイルとして送信し、サーバーの絶対パスは公開しません。
 
 **セッション管理**
 - `/switch` による複数セッションの一覧表示と番号選択、`/new` による新規作成。
@@ -73,6 +74,27 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 - 設定ウィザード：13 プラットフォームのガイド付き設定。パラメータ説明、取得手順、必要に応じて QR ログインを提供します。
 - 会話テスト：オンラインで会話動作を確認できます。
 - モバイル対応レイアウト。
+
+## ファイル転送
+
+`@@パスワード コマンド` で Claude Code CLI または Skill がファイルを作成した場合、IM Bridge はワークスペース内の安全なファイルを捕捉し、サーバーパスを公開せずに返送します。対応プラットフォームでは、ユーザーがアップロードしたファイルもワークスペースに保存し、相対パスを Agent/CLI に渡して後続処理に利用できます。
+
+- WeCom / 企業微信、個人微信、Telegram：生成ファイルを添付として送信し、ユーザーアップロードのファイル/画像/動画も受信可能
+- その他のアダプター：生成ファイルはファイル名とサイズのみの通知にフォールバックし、サーバーパスは公開しません。ユーザーアップロード受信は未実装です
+- 既定の安全な拡張子：`.docx`, `.xlsx`, `.pptx`, `.pdf`, `.csv`, `.txt`, `.md`, `.zip`, `.png`, `.jpg`, `.jpeg`, `.gif`
+- 既定の制限：1 ファイル 20MB、1 メッセージ最大 5 ファイル
+
+設定：
+
+```env
+IM_WORKSPACE_ROOT=/path/to/im-bridge
+IM_DELIVER_EXTENSIONS=.docx,.pdf,.zip,.png,.jpg
+IM_DELIVER_MAX_BYTES=20971520
+IM_DELIVER_MAX_FILES=5
+WEIXIN_CDN_BASE_URL=https://novac2c.cdn.weixin.qq.com/c2c
+```
+
+安全対策：ワークスペース外のファイル、`.env`、秘密情報に見えるファイル、隠しファイル、許可されていない拡張子は送信しません。返信本文から絶対パスを除去します。個人微信のファイル通道は既定で WeChat CDN を使用し、必要に応じて `WEIXIN_CDN_BASE_URL` で上書きできます。
 
 ## コマンド
 

@@ -45,6 +45,7 @@ const PLATFORMS = {
     vars: [
       { key: 'WEIXIN_TOKEN', label: 'iLink Bot Token', hint: '微信官方 iLink Bot API Token（安全不封号）' },
       { key: 'WEIXIN_BASE_URL', label: 'API 地址', hint: '默认 https://ilinkai.weixin.qq.com', default: 'https://ilinkai.weixin.qq.com', optional: true },
+      { key: 'WEIXIN_CDN_BASE_URL', label: 'CDN 地址', hint: '默认 https://novac2c.cdn.weixin.qq.com/c2c', default: 'https://novac2c.cdn.weixin.qq.com/c2c', optional: true },
       { key: 'WEIXIN_ALLOW_FROM', label: '白名单（逗号分隔用户ID，留空允许所有人）', optional: true },
     ],
     steps: [

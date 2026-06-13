@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { config } from './config.js';
+import { classifyDeliverableFile, dedupeFiles, extractWorkspacePaths, stripKnownPaths } from './file-delivery.js';
 
 // 存储每个用户的CLI会话ID (userId -> sessionId)
 const cliSessions = new Map();
@@ -68,6 +69,34 @@ export function verifyPassword(inputPassword) {
   return inputPassword === expected;
 }
 
+function textResult(text) {
+  return { text, files: [] };
+}
+
+async function buildDeliverableFiles(candidateFiles, outputText = '') {
+  const candidates = new Set(candidateFiles);
+  for (const filePath of extractWorkspacePaths(outputText)) {
+    candidates.add(filePath);
+  }
+
+  const files = [];
+  for (const filePath of candidates) {
+    const classified = await classifyDeliverableFile(filePath);
+    if (classified.ok) {
+      files.push(classified.file);
+    } else {
+      console.log(`[CLI] 跳过文件下发 ${filePath}: ${classified.reason}`);
+    }
+  }
+  return dedupeFiles(files);
+}
+
+function collectToolFile(name, input) {
+  const fileTools = new Set(['Write', 'write_file', 'Edit', 'edit_file', 'NotebookEdit', 'notebook_edit']);
+  if (!fileTools.has(name)) return '';
+  return input.file_path || input.path || input.notebook_path || '';
+}
+
 /**
  * 执行 Claude Code CLI 命令（流式解析，不缓存全部输出）
  * @param {string} command - 要执行的命令
@@ -107,6 +136,7 @@ export function executeCliCommand(command, onStatus, sessionId = null) {
     let buffer = '';
     let lastOutputTime = startTime;
     const bashCommands = [];
+    const candidateFiles = new Set();
     let finalText = '';
     let stopReason = null;
     let isTruncated = false;
@@ -158,10 +188,12 @@ export function executeCliCommand(command, onStatus, sessionId = null) {
                   bashCommands.push(cmd);
                   if (onStatus) onStatus(`$ ${cmd.substring(0, 80)}`);
                 } else if (name === 'Write' || name === 'write_file') {
-                  const filePath = input.file_path || input.path || '';
+                  const filePath = collectToolFile(name, input);
+                  if (filePath) candidateFiles.add(filePath);
                   if (onStatus) onStatus(`📝 写入: ${filePath.split('/').pop()}`);
-                } else if (name === 'Edit' || name === 'edit_file') {
-                  const filePath = input.file_path || input.path || '';
+                } else if (name === 'Edit' || name === 'edit_file' || name === 'NotebookEdit' || name === 'notebook_edit') {
+                  const filePath = collectToolFile(name, input);
+                  if (filePath) candidateFiles.add(filePath);
                   if (onStatus) onStatus(`✏️ 编辑: ${filePath.split('/').pop()}`);
                 } else if (name === 'Read' || name === 'read_file') {
                   const filePath = input.file_path || input.path || '';
@@ -219,7 +251,7 @@ export function executeCliCommand(command, onStatus, sessionId = null) {
       if (msg) console.log(`[CLI:stderr] ${msg}`);
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       clearInterval(stallTimer);
       const duration = Math.round((Date.now() - startTime) / 1000);
 
@@ -233,7 +265,9 @@ export function executeCliCommand(command, onStatus, sessionId = null) {
         }
         result += finalText ? `⚠️ 部分结果:\n${finalText}` : '（无输出）';
         result += '\n\n💡 任务因 3 分钟无输出被自动终止。如需继续，请重新发送命令。';
-        resolve({ output: result, duration, stalled: true, sessionId: sessionIdOut });
+        const files = await buildDeliverableFiles(candidateFiles, result);
+        result = stripKnownPaths(result, files);
+        resolve({ output: result, files, duration, stalled: true, sessionId: sessionIdOut });
         return;
       }
 
@@ -255,7 +289,9 @@ export function executeCliCommand(command, onStatus, sessionId = null) {
         result += '\n\n⚠️ 任务因输出 Token 限制被截断，可能未完成。如需完整执行，请简化任务或分步执行。';
       }
 
-      resolve({ output: result, duration, truncated: isTruncated, stopReason, bashCommands, sessionId: sessionIdOut });
+      const files = await buildDeliverableFiles(candidateFiles, result);
+      result = stripKnownPaths(result, files);
+      resolve({ output: result, files, duration, truncated: isTruncated, stopReason, bashCommands, sessionId: sessionIdOut });
     });
 
     proc.on('error', (err) => {
@@ -275,8 +311,8 @@ export function executeCliCommand(command, onStatus, sessionId = null) {
 export async function handleCliPassthrough(message, onStatus, userId = null) {
   const parsed = parseCliCommand(message);
 
-  if (!parsed.valid) return parsed.error || '❌ 格式错误。用法: @@密码 命令内容 或 @@密码（接入上次会话）';
-  if (!verifyPassword(parsed.password)) return '❌ 密码错误';
+  if (!parsed.valid) return textResult(parsed.error || '❌ 格式错误。用法: @@密码 命令内容 或 @@密码（接入上次会话）');
+  if (!verifyPassword(parsed.password)) return textResult('❌ 密码错误');
 
   // 处理 CLI 子命令（/new 强制新建会话，/clear 清除会话）
   const cliCmd = parsed.command.trim();
@@ -284,13 +320,13 @@ export async function handleCliPassthrough(message, onStatus, userId = null) {
     if (userId) clearCliSessionId(userId);
     const realCommand = cliCmd.slice(4).trim();
     if (!realCommand) {
-      return '✅ 已开启新的CLI会话，下次发送 @@密码 命令内容 将创建新会话';
+      return textResult('✅ 已开启新的CLI会话，下次发送 @@密码 命令内容 将创建新会话');
     }
     // 用 /new 后面的内容作为实际命令，继续执行（会话已清除，会新建）
     parsed.command = realCommand;
   } else if (cliCmd === '/clear') {
     if (userId) clearCliSessionId(userId);
-    return '✅ CLI会话已清空，下次@@命令将创建新会话';
+    return textResult('✅ CLI会话已清空，下次@@命令将创建新会话');
   }
 
   // 获取用户的CLI会话ID（用于恢复会话）
@@ -302,7 +338,7 @@ export async function handleCliPassthrough(message, onStatus, userId = null) {
   // 处理只输入密码的情况（接入上次会话）
   if (parsed.isResumeOnly) {
     if (!existingSessionId) {
-      return '❌ 没有找到上次会话。请先使用 @@密码 命令内容 执行一次命令来创建会话。';
+      return textResult('❌ 没有找到上次会话。请先使用 @@密码 命令内容 执行一次命令来创建会话。');
     }
 
     // 使用默认命令恢复会话
@@ -320,9 +356,9 @@ export async function handleCliPassthrough(message, onStatus, userId = null) {
       const statusIcon = result.truncated ? '⚠️' : '🖥️';
       const statusText = result.truncated ? '会话已接入（输出被截断）' : '会话已接入';
       const sessionNote = `\n📌 会话ID: ${existingSessionId}`;
-      return `${statusIcon} ${statusText} (${result.duration}s)\n\n${result.output}${sessionNote}`;
+      return { text: `${statusIcon} ${statusText} (${result.duration}s)\n\n${result.output}${sessionNote}`, files: result.files || [] };
     } catch (err) {
-      return `❌ 接入会话失败: ${err.message}`;
+      return textResult(`❌ 接入会话失败: ${err.message}`);
     }
   }
 
@@ -331,6 +367,7 @@ export async function handleCliPassthrough(message, onStatus, userId = null) {
   let attempt = 0;
   let lastOutput = '';
   let currentSessionId = existingSessionId;
+  const allFiles = [];
 
   while (attempt <= maxRetries) {
     attempt++;
@@ -346,6 +383,7 @@ export async function handleCliPassthrough(message, onStatus, userId = null) {
       }
 
       const result = await executeCliCommand(command, onStatus, currentSessionId);
+      allFiles.push(...(result.files || []));
 
       // 保存新的session_id
       if (result.sessionId && userId) {
@@ -360,17 +398,19 @@ export async function handleCliPassthrough(message, onStatus, userId = null) {
       }
 
       // 正常完成或最后一次重试
+      const files = dedupeFiles(allFiles);
       const statusIcon = result.truncated ? '⚠️' : '🖥️';
       const statusText = result.truncated ? 'CLI 执行被截断' : 'CLI 执行完成';
       const retryNote = attempt > 1 ? `，经过 ${attempt} 次尝试` : '';
       const sessionNote = currentSessionId ? `\n📌 会话ID: ${currentSessionId}` : '';
-      return `${statusIcon} ${statusText} (${result.duration}s${retryNote})\n\n${result.output}${sessionNote}`;
+      const text = stripKnownPaths(`${statusIcon} ${statusText} (${result.duration}s${retryNote})\n\n${result.output}${sessionNote}`, files);
+      return { text, files };
     } catch (err) {
       if (attempt <= maxRetries) {
         if (onStatus) onStatus(`❌ 执行失败 (${attempt}/${maxRetries + 1})，正在重试...`);
         continue;
       }
-      return `❌ ${err.message}`;
+      return textResult(`❌ ${err.message}`);
     }
   }
 }

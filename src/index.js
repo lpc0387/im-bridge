@@ -6,6 +6,7 @@ import { chat, clearHistory, getTurnCount } from './claude.js';
 import { mcpManager } from './mcp-client.js';
 import { sessionManager } from './session.js';
 import { handleCliPassthrough, clearCliSessionId } from './cli-passthrough.js';
+import { formatBytes } from './file-delivery.js';
 import { checkMessageGuard, markBusy, markIdle, getPendingMessage, clearChoice } from './message-guard.js';
 import { AdapterManager } from './adapters/manager.js';
 import { AgentManager } from './agents/manager.js';
@@ -38,6 +39,7 @@ const PLATFORMS = {
   weixin: { name: '个人微信', icon: '📱', vars: [
     { key: 'WEIXIN_TOKEN', label: 'iLink Bot Token', hint: '微信官方 iLink Bot API Token' },
     { key: 'WEIXIN_BASE_URL', label: 'API 地址', default: 'https://ilinkai.weixin.qq.com', optional: true },
+    { key: 'WEIXIN_CDN_BASE_URL', label: 'CDN 地址', default: 'https://novac2c.cdn.weixin.qq.com/c2c', optional: true },
     { key: 'WEIXIN_ALLOW_FROM', label: '白名单', hint: '逗号分隔用户ID，留空允许所有人', optional: true },
   ]},
   feishu: { name: '飞书', icon: '🐦', vars: [
@@ -504,6 +506,10 @@ async function main() {
         }
       }
 
+      const contentForAgent = message.files?.length
+        ? `${message.content}\n\n[用户上传文件已保存到工作区相对路径，可按需读取: ${message.files.map(f => f.relativePath || f.name).join(', ')}]`
+        : message.content;
+
       // @@命令 — CLI 透传
       if (message.content.startsWith('@@')) {
         markBusy(message.userId, 'CLI 命令');
@@ -511,13 +517,32 @@ async function main() {
           // 只发一条"正在处理"，中间状态不发（节省 context_token）
           await message.sendStatus('正在执行 CLI 任务，请耐心等待...').catch(() => {});
 
-          const reply = await handleCliPassthrough(message.content, (status) => {
+          const cliMessage = message.files?.length
+            ? `${message.content}\n\n用户上传文件已保存到工作区相对路径: ${message.files.map(f => f.relativePath || f.name).join(', ')}`
+            : message.content;
+          const result = await handleCliPassthrough(cliMessage, (status) => {
             // 只记日志，不发到 IM（避免消耗 context_token）
             console.log(`[CLI:status] ${status}`);
           }, message.userId);
 
           // 发最终结果（这是关键，必须成功）
+          const reply = typeof result === 'string' ? result : result.text;
+          const files = Array.isArray(result?.files) ? result.files : [];
           await message.send(reply);
+
+          for (const file of files) {
+            try {
+              if (typeof message.sendFile !== 'function') throw new Error('当前平台未接入文件发送能力');
+              await message.sendFile(file.path, {
+                filename: file.name,
+                caption: file.name,
+                mimeType: file.mimeType,
+                size: formatBytes(file.size),
+              });
+            } catch (fileErr) {
+              await message.send(`📎 文件已生成: ${file.name} (${formatBytes(file.size)})\n附件发送失败: ${fileErr.message}`);
+            }
+          }
         } catch (err) {
           await message.send(`❌ CLI 执行失败: ${err.message}`).catch(() => {});
         } finally {
@@ -529,7 +554,7 @@ async function main() {
       // 普通消息
       markBusy(message.userId, '对话');
       try {
-        const reply = await chat(message.userId, message.content, async (status) => {
+        const reply = await chat(message.userId, contentForAgent, async (status) => {
           await message.sendStatus(status);
         });
         await message.send(reply);

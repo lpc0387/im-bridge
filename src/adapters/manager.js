@@ -203,4 +203,10 @@ export class AdapterManager {
     if (!adapter) throw new Error(`未找到适配器: ${platform}`);
     return await adapter.sendMessage(userId, content, options);
   }
+
+  async sendFile(platform, userId, file, options = {}) {
+    const adapter = this.adapters.get(platform);
+    if (!adapter) throw new Error(`未找到适配器: ${platform}`);
+    return await adapter.sendFile(userId, file, options);
+  }
 }

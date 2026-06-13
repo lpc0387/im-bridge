@@ -1,6 +1,6 @@
 {
   "name": "im-bridge",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "description": "IM Bridge - 13 平台 IM 接入 Claude（企微/个人微信/飞书/钉钉/Telegram/Slack/Discord/LINE/WhatsApp/Signal/Matrix/Teams/Google Chat）",
   "main": "src/index.js",
   "type": "module",

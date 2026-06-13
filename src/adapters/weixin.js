@@ -1,4 +1,18 @@
+import nodeCrypto from 'crypto';
+import fs from 'fs/promises';
 import { BaseAdapter } from './base.js';
+import { classifyDeliverableFile, getMimeType, saveIncomingFile } from '../file-delivery.js';
+
+const MESSAGE_ITEM_TEXT = 1;
+const MESSAGE_ITEM_IMAGE = 2;
+const MESSAGE_ITEM_VOICE = 3;
+const MESSAGE_ITEM_FILE = 4;
+const MESSAGE_ITEM_VIDEO = 5;
+const UPLOAD_MEDIA_IMAGE = 1;
+const UPLOAD_MEDIA_VIDEO = 2;
+const UPLOAD_MEDIA_FILE = 3;
+const AES_BLOCK_SIZE = 16;
+const MAX_WEIXIN_MEDIA_BYTES = 100 * 1024 * 1024;
 
 /**
  * 个人微信适配器（基于微信官方 iLink Bot API）
@@ -14,9 +28,11 @@ export class WeixinAdapter extends BaseAdapter {
     super('weixin', config);
     this.token = config.token;
     this.baseURL = (config.baseURL || 'https://ilinkai.weixin.qq.com').replace(/\/$/, '');
+    this.cdnBaseURL = (config.cdnBaseURL || 'https://novac2c.cdn.weixin.qq.com/c2c').replace(/\/$/, '');
     this.allowFrom = config.allowFrom || '';
     this.routeTag = config.routeTag || '';
 
+    this.fileCapability = 'attachment';
     this.polling = false;
     this.syncBuf = '';
     this.contextTokens = {};
@@ -260,15 +276,23 @@ export class WeixinAdapter extends BaseAdapter {
       this.contextTokens[from] = msg.context_token;
     }
 
-    // 提取文本
+    // 提取文本和文件
     const items = msg.item_list || [];
     let text = '';
     for (const item of items) {
-      if (item.type === 1 && item.text_item?.text) {
+      if (item.type === MESSAGE_ITEM_TEXT && item.text_item?.text) {
         text += item.text_item.text;
       }
+      if (item.type === MESSAGE_ITEM_VOICE && item.voice_item?.text) {
+        text += item.voice_item.text;
+      }
     }
-    if (!text.trim()) return;
+
+    const files = await this._collectInboundFiles(items);
+    if (!text.trim() && files.length === 0) return;
+    if (!text.trim() && files.length > 0) {
+      text = `用户发送了文件: ${files.map(f => f.name).join(', ')}`;
+    }
 
     console.log(`[Weixin] 收到 ${from}: ${text.substring(0, 50)}...`);
 
@@ -295,9 +319,11 @@ export class WeixinAdapter extends BaseAdapter {
         userId: from,
         userName: from,
         content: text.trim(),
+        files,
         messageId: String(msg.message_id || ''),
         reply: async (content) => await this._sendChunks(from, content),
         send: async (content) => await this._sendChunks(from, content),
+        sendFile: async (file, options) => await this.sendFile(from, file, options),
         sendStatus: async (status) => {
           statusBuffer.push(status);
           // 5 秒内的状态合并为一条消息发送
@@ -367,19 +393,218 @@ export class WeixinAdapter extends BaseAdapter {
   }
 
   async _sendText(to, text, contextToken) {
+    await this._sendItem(to, { type: MESSAGE_ITEM_TEXT, text_item: { text } }, contextToken);
+  }
+
+  async _sendItem(to, item, contextToken = this.contextTokens[to]) {
+    if (!contextToken) throw new Error(`缺少 context_token: ${to}`);
     const clientId = `im-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    await this._post('ilink/bot/sendmessage', {
+    const resp = await this._post('ilink/bot/sendmessage', {
       msg: {
         from_user_id: '',
         to_user_id: to,
         client_id: clientId,
         message_type: 2,
         message_state: 2,
-        item_list: [{ type: 1, text_item: { text } }],
+        item_list: [item],
         context_token: contextToken,
       },
       base_info: { channel_version: 'im-bridge-weixin/1.0' },
     });
+    if ((resp?.ret !== undefined && resp.ret !== 0) || (resp?.errcode !== undefined && resp.errcode !== 0)) {
+      throw new Error(`微信消息发送失败: ret=${resp.ret || 0} errcode=${resp.errcode || 0} ${resp.errmsg || ''}`);
+    }
+    return resp;
+  }
+
+  // ========== 文件传输 ==========
+
+  async sendFile(userId, filePath, options = {}) {
+    const classified = await classifyDeliverableFile(filePath);
+    if (!classified.ok) throw new Error(classified.reason);
+
+    const file = classified.file;
+    const data = await fs.readFile(file.path);
+    const mediaType = this._isVideoFile(file, options) ? UPLOAD_MEDIA_VIDEO
+      : this._isImageFile(file, options) ? UPLOAD_MEDIA_IMAGE
+        : UPLOAD_MEDIA_FILE;
+    const ref = await this._uploadToWeixinCDN(userId, data, mediaType, 'sendFile');
+
+    const item = mediaType === UPLOAD_MEDIA_VIDEO
+      ? {
+          type: MESSAGE_ITEM_VIDEO,
+          video_item: {
+            media: this._mediaFromUploadRef(ref),
+            video_size: ref.cipherSize,
+          },
+        }
+      : mediaType === UPLOAD_MEDIA_IMAGE
+        ? {
+            type: MESSAGE_ITEM_IMAGE,
+            image_item: {
+              media: this._mediaFromUploadRef(ref),
+              mid_size: ref.cipherSize,
+            },
+          }
+        : {
+            type: MESSAGE_ITEM_FILE,
+            file_item: {
+              media: this._mediaFromUploadRef(ref),
+              file_name: options.filename || file.name,
+              len: String(ref.rawSize),
+            },
+          };
+
+    const result = await this._sendItem(userId, item);
+    console.log(`[Weixin] 已发送文件: ${options.filename || file.name}`);
+    return result;
+  }
+
+  async _collectInboundFiles(items) {
+    const files = [];
+    for (const item of items || []) {
+      try {
+        const saved = await this._downloadInboundItem(item);
+        if (!saved) continue;
+        const classified = await classifyDeliverableFile(saved);
+        if (classified.ok) files.push(classified.file);
+      } catch (err) {
+        console.warn(`[Weixin] 下载用户文件失败: ${err.message}`);
+      }
+    }
+    return files;
+  }
+
+  async _downloadInboundItem(item) {
+    if (item.type === MESSAGE_ITEM_FILE && item.file_item?.media) {
+      const filename = item.file_item.file_name || 'weixin-file';
+      const data = await this._downloadAndDecryptCDN(item.file_item.media, 'inbound file');
+      return await saveIncomingFile('weixin', filename, data);
+    }
+    if (item.type === MESSAGE_ITEM_IMAGE && item.image_item?.media) {
+      const data = await this._downloadAndDecryptCDN(item.image_item.media, 'inbound image', item.image_item.aeskey);
+      return await saveIncomingFile('weixin', `image-${Date.now()}.${this._imageExt(data)}`, data);
+    }
+    if (item.type === MESSAGE_ITEM_VIDEO && item.video_item?.media) {
+      const data = await this._downloadAndDecryptCDN(item.video_item.media, 'inbound video');
+      return await saveIncomingFile('weixin', `video-${Date.now()}.mp4`, data);
+    }
+    return null;
+  }
+
+  async _uploadToWeixinCDN(to, data, mediaType, label) {
+    if (!data?.length) throw new Error('文件为空');
+    if (data.length > MAX_WEIXIN_MEDIA_BYTES) throw new Error('文件超过微信 CDN 上传限制');
+
+    const aesKey = nodeCrypto.randomBytes(16);
+    const filekey = nodeCrypto.randomBytes(16).toString('hex');
+    const uploadReq = {
+      filekey,
+      media_type: mediaType,
+      to_user_id: to,
+      rawsize: data.length,
+      rawfilemd5: nodeCrypto.createHash('md5').update(data).digest('hex'),
+      filesize: this._aesECBPaddedSize(data.length),
+      no_need_thumb: true,
+      aeskey: aesKey.toString('hex'),
+      base_info: { channel_version: 'im-bridge-weixin/1.0' },
+    };
+    const uploadInfo = await this._post('ilink/bot/getuploadurl', uploadReq);
+    if ((uploadInfo?.ret !== undefined && uploadInfo.ret !== 0) || (uploadInfo?.errcode !== undefined && uploadInfo.errcode !== 0)) {
+      throw new Error(`获取微信上传地址失败: ret=${uploadInfo.ret || 0} errcode=${uploadInfo.errcode || 0} ${uploadInfo.errmsg || ''}`);
+    }
+    const uploadUrl = uploadInfo.upload_full_url || this._buildCdnUploadURL(uploadInfo.upload_param, filekey);
+    if (!uploadUrl) throw new Error('微信未返回上传地址');
+
+    const cipher = this._encryptAESECB(data, aesKey);
+    let lastErr;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const resp = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: cipher,
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.headers.get('x-error-message') || resp.statusText}`);
+        const downloadParam = resp.headers.get('x-encrypted-param');
+        if (!downloadParam) throw new Error('CDN 响应缺少 x-encrypted-param');
+        return { downloadParam, aesKey, cipherSize: cipher.length, rawSize: data.length };
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 3) await this._sleep(this.retryDelay);
+      }
+    }
+    throw new Error(`微信 CDN 上传失败: ${lastErr.message}`);
+  }
+
+  async _downloadAndDecryptCDN(media, label, aesKeyHex = '') {
+    const encParam = media.encrypt_query_param;
+    if (!encParam) throw new Error(`${label}: 缺少 encrypt_query_param`);
+    const url = `${this.cdnBaseURL}/download?encrypted_query_param=${encodeURIComponent(encParam)}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`${label}: CDN 下载失败 HTTP ${resp.status}`);
+    const data = Buffer.from(await resp.arrayBuffer());
+    const aesKey = this._parseAesKey(media.aes_key, aesKeyHex, label);
+    return this._decryptAESECB(data, aesKey);
+  }
+
+  _mediaFromUploadRef(ref) {
+    return {
+      encrypt_query_param: ref.downloadParam,
+      aes_key: Buffer.from(ref.aesKey.toString('hex')).toString('base64'),
+      encrypt_type: 1,
+    };
+  }
+
+  _buildCdnUploadURL(uploadParam, filekey) {
+    if (!uploadParam) return '';
+    return `${this.cdnBaseURL}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${encodeURIComponent(filekey)}`;
+  }
+
+  _aesECBPaddedSize(len) {
+    return (Math.floor(len / AES_BLOCK_SIZE) + 1) * AES_BLOCK_SIZE;
+  }
+
+  _encryptAESECB(data, key) {
+    const cipher = nodeCrypto.createCipheriv('aes-128-ecb', key, null);
+    cipher.setAutoPadding(true);
+    return Buffer.concat([cipher.update(data), cipher.final()]);
+  }
+
+  _decryptAESECB(data, key) {
+    const decipher = nodeCrypto.createDecipheriv('aes-128-ecb', key, null);
+    decipher.setAutoPadding(true);
+    return Buffer.concat([decipher.update(data), decipher.final()]);
+  }
+
+  _parseAesKey(base64Key, hexKey, label) {
+    if (hexKey) {
+      const raw = Buffer.from(hexKey, 'hex');
+      if (raw.length === 16) return raw;
+    }
+    const decoded = Buffer.from(base64Key || '', 'base64');
+    if (decoded.length === 16) return decoded;
+    if (decoded.length === 32 && /^[0-9a-fA-F]{32}$/.test(decoded.toString('utf8'))) {
+      return Buffer.from(decoded.toString('utf8'), 'hex');
+    }
+    throw new Error(`${label}: aes_key 格式无效`);
+  }
+
+  _isImageFile(file, options) {
+    const mime = (options.mimeType || file.mimeType || getMimeType(file.path)).toLowerCase();
+    return mime.startsWith('image/');
+  }
+
+  _isVideoFile(file, options) {
+    const mime = (options.mimeType || file.mimeType || getMimeType(file.path)).toLowerCase();
+    return mime.startsWith('video/') || ['.avi', '.m4v', '.mkv', '.mov', '.mp4', '.mpeg', '.mpg', '.webm'].includes(file.ext);
+  }
+
+  _imageExt(data) {
+    if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from('\x89PNG\r\n\x1a\n', 'binary'))) return 'png';
+    if (data.length >= 6 && ['GIF87a', 'GIF89a'].includes(data.subarray(0, 6).toString('binary'))) return 'gif';
+    if (data.length >= 12 && data.subarray(0, 4).toString('binary') === 'RIFF' && data.subarray(8, 12).toString('binary') === 'WEBP') return 'webp';
+    return 'jpg';
   }
 
   // ========== 输入状态 ==========

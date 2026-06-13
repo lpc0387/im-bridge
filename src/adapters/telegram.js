@@ -1,4 +1,6 @@
+import fs from 'fs/promises';
 import { BaseAdapter } from './base.js';
+import { classifyDeliverableFile, saveIncomingFile, sanitizeFilename } from '../file-delivery.js';
 
 /**
  * Telegram 适配器 - Long Polling 模式
@@ -14,6 +16,7 @@ export class TelegramAdapter extends BaseAdapter {
     this.pollTimer = null;
     this.retryDelay = 1000;
     this.maxRetryDelay = 30000;
+    this.fileCapability = 'attachment';
   }
 
   /**
@@ -103,16 +106,73 @@ export class TelegramAdapter extends BaseAdapter {
   }
 
   /**
+   * 发送文件
+   */
+  async sendFile(userId, filePath, options = {}) {
+    const classified = await classifyDeliverableFile(filePath);
+    if (!classified.ok) throw new Error(classified.reason);
+    const file = classified.file;
+    const data = await fs.readFile(file.path);
+    const form = new FormData();
+    form.append('chat_id', userId);
+    form.append('document', new Blob([data], { type: options.mimeType || file.mimeType }), sanitizeFilename(options.filename || file.name));
+    if (options.caption) form.append('caption', options.caption);
+    if (options.replyToMessageId) form.append('reply_to_message_id', String(options.replyToMessageId));
+
+    const resp = await fetch(`https://api.telegram.org/bot${this.token}/sendDocument`, {
+      method: 'POST',
+      body: form,
+    });
+    const result = await resp.json();
+    if (!result.ok) {
+      throw new Error(`Telegram 文件发送失败: ${result.description}`);
+    }
+    console.log(`[Telegram] 已发送文件: ${file.name}`);
+    return result;
+  }
+
+  /**
+   * 下载用户发送的文件
+   */
+  async downloadFile(fileId, filename = 'telegram-file') {
+    const infoResp = await fetch(`https://api.telegram.org/bot${this.token}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: fileId }),
+    });
+    const info = await infoResp.json();
+    if (!info.ok) throw new Error(`获取 Telegram 文件信息失败: ${info.description}`);
+
+    const fileResp = await fetch(`https://api.telegram.org/file/bot${this.token}/${info.result.file_path}`);
+    if (!fileResp.ok) throw new Error(`下载 Telegram 文件失败: HTTP ${fileResp.status}`);
+    const data = Buffer.from(await fileResp.arrayBuffer());
+    return await saveIncomingFile('telegram', filename, data);
+  }
+
+  /**
    * 处理更新
    */
-  handleUpdate(update) {
+  async handleUpdate(update) {
     if (update.message) {
       const message = update.message;
       const chatId = message.chat.id;
       const userId = message.from.id;
-      const text = message.text;
+      const document = message.document || message.video || message.audio || message.voice;
+      let text = message.text || message.caption || '';
+      let files = [];
 
-      if (!text) return;
+      if (!text && !document) return;
+
+      if (document?.file_id) {
+        try {
+          const savedPath = await this.downloadFile(document.file_id, document.file_name || `${document.file_id}.bin`);
+          const classified = await classifyDeliverableFile(savedPath);
+          files = classified.ok ? [classified.file] : [];
+          text = text || `用户发送了文件: ${document.file_name || files[0]?.name || 'file'}`;
+        } catch (err) {
+          text = text || `用户发送了文件，但下载失败: ${err.message}`;
+        }
+      }
 
       console.log(`[Telegram] 收到消息: ${text.substring(0, 50)}...`);
 
@@ -122,6 +182,7 @@ export class TelegramAdapter extends BaseAdapter {
           userId: String(userId),
           userName: message.from.username || message.from.first_name || String(userId),
           content: text,
+          files,
           messageId: message.message_id,
           chatId: String(chatId),
           chatType: message.chat.type, // private, group, supergroup
@@ -132,7 +193,13 @@ export class TelegramAdapter extends BaseAdapter {
             });
           },
           send: async (content, options) => {
-            await this.sendMessage(String(userId), content, options);
+            await this.sendMessage(String(chatId), content, options);
+          },
+          sendFile: async (file, options) => {
+            await this.sendFile(String(chatId), file, {
+              ...options,
+              replyToMessageId: message.message_id,
+            });
           },
           sendStatus: async (status) => {
             await this.sendMessage(String(chatId), `⏳ ${status}`);
@@ -159,7 +226,7 @@ export class TelegramAdapter extends BaseAdapter {
         this.connected = true;
 
         for (const update of updates) {
-          this.handleUpdate(update);
+          await this.handleUpdate(update);
           this.offset = update.update_id + 1;
         }
       } catch (err) {

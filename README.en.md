@@ -51,6 +51,7 @@ Open `http://SERVER_IP:81` → configuration wizard → start chatting.
 - CLI session resume: send only `@@password` to rejoin the previous session; `/new` starts a new one; `/clear` clears it.
 - Built-in 14+ MCP search tools such as Baidu, Bing, GitHub, CSDN, Juejin, and Zhihu.
 - Skill extension system with dynamic creation, invocation, import, and multi-format adaptation.
+- Generated file delivery: `.docx`, PDF, images, and other safe files created by CLI/Skills are sent back as attachments on supported platforms without exposing server paths.
 
 **Session management**
 - Multi-session switching with `/switch`, numbered selection, and `/new`.
@@ -73,6 +74,27 @@ Open `http://SERVER_IP:81` → configuration wizard → start chatting.
 - Configuration wizard: guided setup for 13 platforms with parameter notes, acquisition paths, and QR-code login where applicable.
 - Chat test: test conversation behavior online.
 - Mobile-responsive layout.
+
+## File transfer
+
+When Claude Code CLI or a Skill creates files through `@@password command`, IM Bridge captures safe workspace files and sends them back without exposing server paths. On supported platforms, files uploaded by users are also saved into the workspace and their relative paths are passed to the Agent/CLI for follow-up processing:
+
+- WeCom, Weixin, and Telegram: generated files are delivered as attachments, and user-uploaded files/images/videos can be received.
+- Other adapters: generated files fall back to a filename/size-only notice without exposing server paths; inbound file receiving is not implemented yet.
+- Default safe extensions: `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.csv`, `.txt`, `.md`, `.zip`, `.png`, `.jpg`, `.jpeg`, `.gif`.
+- Default limit: 20 MB per file and 5 files per message.
+
+Configuration:
+
+```env
+IM_WORKSPACE_ROOT=/path/to/im-bridge
+IM_DELIVER_EXTENSIONS=.docx,.pdf,.zip,.png,.jpg
+IM_DELIVER_MAX_BYTES=20971520
+IM_DELIVER_MAX_FILES=5
+WEIXIN_CDN_BASE_URL=https://novac2c.cdn.weixin.qq.com/c2c
+```
+
+Safety: only files inside the workspace can be delivered; `.env`, secret-like files, dotfiles, and disallowed extensions are rejected. Absolute paths are scrubbed from replies. The Weixin file channel uses the WeChat CDN by default and can be overridden with `WEIXIN_CDN_BASE_URL` when needed.
 
 ## Commands
 

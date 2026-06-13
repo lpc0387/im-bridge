@@ -7,6 +7,7 @@ export class BaseAdapter {
     this.name = name;
     this.config = config;
     this.connected = false;
+    this.fileCapability = 'none';
     this.messageHandler = null;
   }
 
@@ -47,12 +48,33 @@ export class BaseAdapter {
   }
 
   /**
+   * 发送文件（默认降级为无路径文本提示）
+   */
+  async sendFile(userId, file, options = {}) {
+    const name = options.filename || file?.name || String(file).split('/').pop() || 'file';
+    const size = options.size ? ` (${options.size})` : '';
+    await this.sendMessage(userId, `📎 文件已生成: ${name}${size}\n当前适配器暂不支持附件下发，请在支持的平台使用文件传输。`);
+  }
+
+  /**
+   * 批量发送文件
+   */
+  async sendFiles(userId, files, options = {}) {
+    const results = [];
+    for (const file of files || []) {
+      results.push(await this.sendFile(userId, file, options));
+    }
+    return results;
+  }
+
+  /**
    * 获取连接状态
    */
   getStatus() {
     return {
       name: this.name,
       connected: this.connected,
+      fileCapability: this.fileCapability,
       config: this._getConfigSummary(),
     };
   }

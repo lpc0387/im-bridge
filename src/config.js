@@ -1,4 +1,13 @@
 import 'dotenv/config';
+import path from 'path';
+
+function parseExtensions(value) {
+  return new Set(String(value || '.docx,.xlsx,.pptx,.pdf,.csv,.txt,.md,.zip,.png,.jpg,.jpeg,.gif')
+    .split(',')
+    .map(ext => ext.trim().toLowerCase())
+    .filter(Boolean)
+    .map(ext => ext.startsWith('.') ? ext : `.${ext}`));
+}
 
 export const config = {
   anthropic: {
@@ -17,6 +26,7 @@ export const config = {
   weixin: {
     token: process.env.WEIXIN_TOKEN,
     baseURL: process.env.WEIXIN_BASE_URL || 'https://ilinkai.weixin.qq.com',
+    cdnBaseURL: process.env.WEIXIN_CDN_BASE_URL || 'https://novac2c.cdn.weixin.qq.com/c2c',
     allowFrom: process.env.WEIXIN_ALLOW_FROM || '',
   },
   feishu: {
@@ -68,6 +78,12 @@ export const config = {
   cli: {
     password: process.env.CLI_ACCESS_PASSWORD,
     // timeoutMs 已移除 — CLI 执行不限时
+  },
+  fileDelivery: {
+    workspaceRoot: process.env.IM_WORKSPACE_ROOT || path.resolve(process.cwd()),
+    extensions: parseExtensions(process.env.IM_DELIVER_EXTENSIONS),
+    maxBytes: parseInt(process.env.IM_DELIVER_MAX_BYTES || String(20 * 1024 * 1024), 10),
+    maxFiles: parseInt(process.env.IM_DELIVER_MAX_FILES || '5', 10),
   },
   port: parseInt(process.env.PORT || '3000', 10),
 };

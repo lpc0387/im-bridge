@@ -6,3 +6,9 @@ logs/
 .DS_Store
 *.memory-card.json
 
+# Generated/private runtime artifacts
+/docs/
+/uploads/
+/hello*.txt
+/hello*.docx
+

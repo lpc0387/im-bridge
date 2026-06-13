@@ -2,6 +2,32 @@
 
 支持 13 个 IM 平台。在 `.env` 中填入对应配置，重启即可启用。
 
+## 文件传输能力
+
+| 平台 | 生成文件下发 | 用户上传文件接收 | 说明 |
+|------|--------------|------------------|------|
+| 企业微信 | ✅ 附件 | ✅ 临时素材下载 | 通过 `media/upload` / `media/get`，默认单文件 20MB |
+| 个人微信 | ✅ 附件/图片/视频 | ✅ CDN 文件/图片/视频下载 | 通过 iLink `getuploadurl` + 微信 CDN + `sendmessage` |
+| Telegram | ✅ 附件 | ✅ document/video/audio/voice 下载 | 通过 `sendDocument` / `getFile` |
+| 其他平台 | ⚠️ 文件名提示 | 暂未实现 | 不暴露服务器路径，后续逐步补齐 |
+
+安全限制：仅允许 `IM_WORKSPACE_ROOT` 工作区内、扩展名白名单内、未超出 `IM_DELIVER_MAX_BYTES` 的文件自动下发；`.env`、隐藏文件和疑似密钥文件会被拒绝。
+
+相关环境变量：
+
+```env
+IM_WORKSPACE_ROOT=/path/to/im-bridge
+IM_DELIVER_EXTENSIONS=.docx,.xlsx,.pptx,.pdf,.csv,.txt,.md,.zip,.png,.jpg,.jpeg,.gif
+IM_DELIVER_MAX_BYTES=20971520
+IM_DELIVER_MAX_FILES=5
+```
+
+个人微信文件通道默认使用微信 CDN `https://novac2c.cdn.weixin.qq.com/c2c`；如官方返回了不同 CDN 或内网环境需要覆盖，可设置：
+
+```env
+WEIXIN_CDN_BASE_URL=https://novac2c.cdn.weixin.qq.com/c2c
+```
+
 ---
 
 ## 1. 企业微信（WeChat Work）

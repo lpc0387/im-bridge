@@ -1,5 +1,7 @@
 import crypto from 'crypto';
+import fs from 'fs/promises';
 import { BaseAdapter } from './base.js';
+import { classifyDeliverableFile, getMimeType, saveIncomingFile, sanitizeFilename } from '../file-delivery.js';
 
 /**
  * 企业微信适配器
@@ -18,6 +20,7 @@ export class WeChatAdapter extends BaseAdapter {
     this.accessToken = null;
     this.tokenExpireAt = 0;
     this.crypto = null;
+    this.fileCapability = 'attachment';
     
     if (this.encodingAESKey) {
       this.crypto = new WeChatCrypto(this.token, this.encodingAESKey, this.corpId);
@@ -81,6 +84,72 @@ export class WeChatAdapter extends BaseAdapter {
   }
 
   /**
+   * 上传临时素材
+   */
+  async uploadMedia(filePath, type = 'file') {
+    const classified = await classifyDeliverableFile(filePath);
+    if (!classified.ok) throw new Error(classified.reason);
+
+    const token = await this.getAccessToken();
+    const file = classified.file;
+    const boundary = `----imbridge${Date.now().toString(16)}`;
+    const data = await fs.readFile(file.path);
+    const head = Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="media"; filename="${sanitizeFilename(file.name)}"\r\n` +
+      `Content-Type: ${file.mimeType || getMimeType(file.path)}\r\n\r\n`
+    );
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+
+    const resp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/media/upload?access_token=${token}&type=${type}`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body: Buffer.concat([head, data, tail]),
+    });
+    const result = await resp.json();
+    if (result.errcode !== 0) {
+      throw new Error(`企微文件上传失败: ${result.errmsg}`);
+    }
+    return { mediaId: result.media_id, file };
+  }
+
+  /**
+   * 发送文件消息
+   */
+  async sendFile(userId, filePath, options = {}) {
+    const token = await this.getAccessToken();
+    const { mediaId, file } = await this.uploadMedia(filePath, 'file');
+    const resp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        touser: userId,
+        msgtype: 'file',
+        agentid: parseInt(this.agentId),
+        file: { media_id: mediaId },
+      }),
+    });
+
+    const data = await resp.json();
+    if (data.errcode !== 0) {
+      throw new Error(`企微文件发送失败: ${data.errmsg}`);
+    }
+    console.log(`[WeCom] 已发送文件: ${options.filename || file.name}`);
+    return data;
+  }
+
+  /**
+   * 下载用户发送的临时素材
+   */
+  async downloadMedia(mediaId, filename = 'wecom-file') {
+    const token = await this.getAccessToken();
+    const resp = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/media/get?access_token=${token}&media_id=${mediaId}`);
+    if (!resp.ok) throw new Error(`下载企微素材失败: HTTP ${resp.status}`);
+    const data = Buffer.from(await resp.arrayBuffer());
+    return await saveIncomingFile('wecom', filename, data);
+  }
+
+  /**
    * 通过 Webhook 发送消息（群机器人）
    */
   async sendWebhook(content, options = {}) {
@@ -137,32 +206,52 @@ export class WeChatAdapter extends BaseAdapter {
   /**
    * 处理回调消息
    */
-  handleMessage(xml) {
+  async handleMessage(xml) {
     // 解析 XML 获取消息内容
     // 这里简化处理，实际需要 XML 解析器
     const contentMatch = xml.match(/<Content><!\[CDATA\[(.*?)\]\]><\/Content>/);
     const userIdMatch = xml.match(/<FromUserName><!\[CDATA\[(.*?)\]\]><\/FromUserName>/);
     const msgIdMatch = xml.match(/<MsgId>(.*?)<\/MsgId>/);
+    const msgType = xml.match(/<MsgType><!\[CDATA\[(.*?)\]\]><\/MsgType>/)?.[1] || 'text';
+    const mediaId = xml.match(/<MediaId><!\[CDATA\[(.*?)\]\]><\/MediaId>/)?.[1];
+    const fileName = xml.match(/<FileName><!\[CDATA\[(.*?)\]\]><\/FileName>/)?.[1] || xml.match(/<Title><!\[CDATA\[(.*?)\]\]><\/Title>/)?.[1];
 
-    if (contentMatch && userIdMatch) {
-      const content = contentMatch[1];
+    if (userIdMatch) {
       const userId = userIdMatch[1];
       const messageId = msgIdMatch ? msgIdMatch[1] : null;
+      let content = contentMatch?.[1] || '';
+      let files = [];
 
+      if (msgType !== 'text' && mediaId) {
+        try {
+          const savedPath = await this.downloadMedia(mediaId, fileName || `${msgType}-${mediaId}`);
+          const classified = await classifyDeliverableFile(savedPath);
+          files = classified.ok ? [classified.file] : [];
+          content = `用户发送了文件: ${fileName || files[0]?.name || msgType}`;
+        } catch (err) {
+          content = `用户发送了${msgType}文件，但下载失败: ${err.message}`;
+        }
+      }
+
+      if (!content) return;
       console.log(`[WeCom] 收到消息: ${content.substring(0, 50)}...`);
 
       if (this.messageHandler) {
         this.messageHandler({
-          platform: 'wechat',
+          platform: 'wecom',
           userId,
           userName: userId,
           content,
+          files,
           messageId,
           reply: async (content, options) => {
             await this.sendMessage(userId, content, options);
           },
           send: async (content, options) => {
             await this.sendMessage(userId, content, options);
+          },
+          sendFile: async (file, options) => {
+            await this.sendFile(userId, file, options);
           },
           sendStatus: async (status) => {
             await this.sendMessage(userId, `⏳ ${status}`);
@@ -227,13 +316,13 @@ export class WeChatAdapter extends BaseAdapter {
 
         res.send('success');
 
-        if (!fromUser || msgType !== 'text' || !content) {
-          console.log(`[WeCom] 忽略非文本消息 (type=${msgType})`);
+        if (!fromUser) {
+          console.log(`[WeCom] 忽略无发送人的消息 (type=${msgType})`);
           return;
         }
 
-        console.log(`[WeCom] 收到 ${fromUser}: ${content.substring(0, 50)}...`);
-        this.handleMessage(xml);
+        console.log(`[WeCom] 收到 ${fromUser}: ${(content || msgType || '').substring(0, 50)}...`);
+        await this.handleMessage(xml);
       } catch (err) {
         console.error('[WeCom] 处理消息失败:', err.message);
         try { res.send('success'); } catch {}

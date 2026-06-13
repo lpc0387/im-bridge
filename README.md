@@ -51,6 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 - CLI 会话续传：只发 `@@密码` 自动接入上次会话；`/new` 强制新建；`/clear` 清空
 - 14+ MCP 搜索工具内置（百度、Bing、GitHub、CSDN、掘金、知乎）
 - Skill 扩展系统（动态创建、调用、导入适配多格式）
+- 生成文件自动下发：CLI/Skill 生成的 `.docx`、PDF、图片等文件会通过支持的平台直接作为附件发送，不暴露服务器绝对路径
 
 **会话管理**
 - 多会话切换（`/switch` 编号选择，`/new` 新建）
@@ -73,6 +74,27 @@ curl -fsSL https://raw.githubusercontent.com/lpc0387/im-bridge/master/install.sh
 - 配置向导：13 平台傻瓜式配置（带参数注释、获取路径、扫码登录）
 - 对话测试：在线测试对话效果
 - 移动端响应式布局
+
+## 文件传输
+
+当通过 `@@密码 命令` 调用 Claude Code CLI 或 Skill 生成文件时，IM Bridge 会自动捕获工作区内的安全文件并下发；用户在支持平台上传的文件也会保存到工作区，并把相对路径传给 Agent/CLI 供后续读取：
+
+- 企业微信、个人微信、Telegram：支持生成文件附件下发，也支持接收用户上传的文件/图片/视频
+- 其他适配器：生成文件先降级为仅含文件名和大小的提示，不暴露服务器路径；用户上传文件接收暂未实现
+- 默认只允许工作区内的安全类型：`.docx`, `.xlsx`, `.pptx`, `.pdf`, `.csv`, `.txt`, `.md`, `.zip`, `.png`, `.jpg`, `.jpeg`, `.gif`
+- 默认单文件上限 20MB，单次最多 5 个文件
+
+可通过环境变量调整：
+
+```env
+IM_WORKSPACE_ROOT=/path/to/im-bridge
+IM_DELIVER_EXTENSIONS=.docx,.pdf,.zip,.png,.jpg
+IM_DELIVER_MAX_BYTES=20971520
+IM_DELIVER_MAX_FILES=5
+WEIXIN_CDN_BASE_URL=https://novac2c.cdn.weixin.qq.com/c2c
+```
+
+安全策略：仅下发工作区内文件，拒绝 `.env`、密钥、隐藏文件和不在白名单内的扩展名；回复正文会清理绝对路径。个人微信文件通道默认使用微信 CDN，必要时可通过 `WEIXIN_CDN_BASE_URL` 覆盖。
 
 ## 命令
 
